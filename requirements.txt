@@ -2,3 +2,4 @@ streamlit
 pandas
 ta
 yfinance
+requests

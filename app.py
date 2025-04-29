@@ -3,11 +3,21 @@ import pandas as pd
 import ta
 import streamlit as st
 import yfinance as yf
+import requests
 
-# List of crypto tickers for yfinance
-crypto_symbols = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD']
+@st.cache_data(ttl=600)
+def get_top_100_crypto_symbols():
+    try:
+        url = 'https://api.coingecko.com/api/v3/coins/markets'
+        params = {'vs_currency': 'usd', 'order': 'market_cap_desc', 'per_page': 100, 'page': 1}
+        response = requests.get(url, params=params)
+        data = response.json()
+        tickers = [f"{coin['symbol'].upper()}-USD" for coin in data]
+        return tickers
+    except:
+        return ['BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD']
 
-@st.cache_data(ttl=180)
+@st.cache_data(ttl=300)
 def fetch_indicators_with_signals(symbol, interval, period, label):
     try:
         df = yf.download(tickers=symbol, interval=interval, period=period)
@@ -34,12 +44,18 @@ def fetch_indicators_with_signals(symbol, interval, period, label):
         vwap_val = vwap.iloc[-1]
 
         def signal_emoji(value, low, high):
-            if value < low:
-                return '🟢'
+            if isinstance(value, str):
+                return 'N/A'
+            if value < low * 0.67:
+                return '🔶'  # Strong Buy
+            elif value < low:
+                return '🟢'  # Buy
+            elif value > high * 1.33:
+                return '🔻'  # Strong Sell
             elif value > high:
-                return '🔴'
+                return '🔴'  # Sell
             else:
-                return '🟡'
+                return '🟡'  # Wait
 
         return {
             f'RSI {label}': f"{round(rsi_val, 2)} {signal_emoji(rsi_val, 30, 70)}",
@@ -56,9 +72,11 @@ def fetch_indicators_with_signals(symbol, interval, period, label):
                 'Doda Stoch': 'N/A', 'GChannel': 'N/A', 'Vol Flow': 'N/A', 'VWAP': 'N/A'}
 
 def main():
+    st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
     st.title("📈 Live Crypto Technical Dashboard")
-    st.write("Auto-refresh every 3 minutes")
+    st.write("Auto-refresh every 5 minutes. Use your mouse scroll wheel or trackpad to move up/down.")
 
+    crypto_symbols = get_top_100_crypto_symbols()
     results = []
     for symbol in crypto_symbols:
         hourly = fetch_indicators_with_signals(symbol, '60m', '5d', '1h')
@@ -66,8 +84,45 @@ def main():
         weekly = fetch_indicators_with_signals(symbol, '1wk', '2mo', '1w')
         monthly = fetch_indicators_with_signals(symbol, '1mo', '1y', '1mo')
 
+        price_df = yf.download(tickers=symbol, interval='1d', period='2d')
+        if price_df.empty or len(price_df) < 2:
+            price_info = 'N/A'
+        else:
+            latest_price = price_df['Close'].iloc[-1]
+            prev_price = price_df['Close'].iloc[-2]
+            pct_change = ((latest_price - prev_price) / prev_price) * 100
+            price_info = f"${latest_price:.2f} ({pct_change:+.2f}%)"
+
+        # Calculate GPT decision
+        decision_score = 0
+        indicators = [hourly['RSI 1h'], daily['RSI 1d'], daily['MACD'], hourly['SRSI']]
+        for indicator in indicators:
+            if isinstance(indicator, str):
+                if '🔶' in indicator:
+                    decision_score += 2
+                elif '🟢' in indicator:
+                    decision_score += 1
+                elif '🟡' in indicator:
+                    decision_score += 0
+                elif '🔴' in indicator:
+                    decision_score -= 1
+                elif '🔻' in indicator:
+                    decision_score -= 2
+
+        if decision_score >= 4:
+            gpt_decision = '**🔶 Strong Buy**'
+        elif decision_score >= 2:
+            gpt_decision = '**🟢 Buy**'
+        elif decision_score <= -4:
+            gpt_decision = '**🔻 Strong Sell**'
+        elif decision_score <= -2:
+            gpt_decision = '**🔴 Sell**'
+        else:
+            gpt_decision = '**🟡 Hold**'
+
         combined = {
             'Crypto': symbol,
+            'Price (1d %)': price_info,
             'RSI (1h)': hourly['RSI 1h'],
             'RSI (1d)': daily['RSI 1d'],
             'RSI (1w)': weekly['RSI 1w'],
@@ -78,12 +133,27 @@ def main():
             'Doda Stoch': hourly['Doda Stoch'],
             'GChannel': hourly['GChannel'],
             'Vol Flow': hourly['Vol Flow'],
-            'VWAP': hourly['VWAP']
+            'VWAP': hourly['VWAP'],
+            'GPT': gpt_decision
         }
         results.append(combined)
 
     df = pd.DataFrame(results)
-    st.dataframe(df, use_container_width=True)
+
+    def highlight_price(val):
+        if isinstance(val, str) and '(' in val and '%' in val:
+            try:
+                percent = float(val.split('(')[-1].replace('%', '').replace(')', ''))
+                if percent > 0:
+                    return 'color: green'
+                elif percent < 0:
+                    return 'color: red'
+            except:
+                return ''
+        return ''
+
+    styled_df = df.style.applymap(highlight_price, subset=['Price (1d %)'])
+    st.dataframe(styled_df, use_container_width=True, height=800)
 
 if __name__ == '__main__':
     main()
