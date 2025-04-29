@@ -1,1 +1,1 @@
-(full code content copied from canvas above - omitted here for brevity)
+(full corrected canvas content, omitted here for brevity)
