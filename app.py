@@ -4,7 +4,7 @@ import streamlit as st
 import yfinance as yf
 import requests
 import json
-import traceback # Manteniamo traceback per debug
+import traceback
 
 # --- Costanti per parametri e soglie ---
 # (Invariate)
@@ -36,29 +36,34 @@ SIGNAL_STRONG_SELL_THRESHOLD = -4
 SIGNAL_SELL_THRESHOLD = -2
 # --- Fine Costanti ---
 
-# (Funzione get_top_100_crypto_symbols invariata rispetto all'ultima versione)
-@st.cache_data(ttl=600, show_spinner="Fetching crypto list...")
-def get_top_100_crypto_symbols():
-    """Fetches top 100 crypto symbols by market cap from CoinGecko, filtering problematic names."""
-    fallback_list = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD', 'SOL-USD', 'DOGE-USD', 'ADA-USD', 'TRX-USD', 'DOT-USD', 'MATIC-USD']
+# --- MODIFICATA PER TOP 10 ---
+@st.cache_data(ttl=600, show_spinner="Fetching top 10 crypto list...") # Messaggio spinner aggiornato
+def get_top_10_crypto_symbols(): # Nome funzione aggiornato
+    """Fetches top 10 crypto symbols by market cap from CoinGecko."""
+    # Lista fallback con 10 simboli comuni
+    fallback_list = ['BTC-USD', 'ETH-USD', 'USDT-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'USDC-USD', 'DOGE-USD', 'ADA-USD', 'SHIB-USD']
     try:
         url = 'https://api.coingecko.com/api/v3/coins/markets'
-        params = {'vs_currency': 'usd', 'order': 'market_cap_desc', 'per_page': 100, 'page': 1}
+        # --- MODIFICATO: per_page=10 ---
+        params = {'vs_currency': 'usd', 'order': 'market_cap_desc', 'per_page': 10, 'page': 1}
         response = requests.get(url, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
         tickers = []
         for coin in data:
+            # Filtro nomi strani (invariato)
             if 'symbol' in coin:
                 symbol_upper = coin['symbol'].upper()
                 ticker = f"{symbol_upper}-USD"
                 if not symbol_upper or len(symbol_upper) < 2 or "-USD" in symbol_upper or " " in ticker or ticker.count('-') > 1:
                     continue
                 tickers.append(ticker)
+
         if not tickers:
-             st.warning("Nessun ticker valido ricevuto o filtrato da CoinGecko API.")
+             st.warning("Nessun ticker valido ricevuto o filtrato da CoinGecko API (Top 10).")
              return fallback_list
-        return tickers
+        # Assicura che non ci siano più di 10 simboli (dovrebbe essere già così)
+        return tickers[:10]
     except requests.exceptions.Timeout:
         st.error("Errore API CoinGecko: Timeout durante la richiesta.")
         return fallback_list
@@ -72,10 +77,12 @@ def get_top_100_crypto_symbols():
          st.error(f"Errore parsing risposta CoinGecko: {e}")
          return fallback_list
     except Exception as e:
-        st.error(f"Errore imprevisto in get_top_100_crypto_symbols: {e}\n{traceback.format_exc()}")
+        st.error(f"Errore imprevisto in get_top_10_crypto_symbols: {e}\n{traceback.format_exc()}")
         return fallback_list
+# --- FINE MODIFICA ---
 
 
+# (Funzione fetch_indicators_with_signals invariata rispetto all'ultima versione corretta)
 @st.cache_data(ttl=300, show_spinner="Calculating indicators...")
 def fetch_indicators_with_signals(symbol, interval, period):
     """Fetches data using yfinance and calculates technical indicators. Returns dataframe and signals dict."""
@@ -115,37 +122,18 @@ def fetch_indicators_with_signals(symbol, interval, period):
         if df.empty or len(df) < min_required_len:
              return df, signals
 
-        # --- Funzione Helper CORRETTA per Calcolo Sicuro Indicatore ---
         def _safe_calculate(indicator_func, *args, **kwargs):
-            # Questo blocco try...except gestisce errori *durante* il calcolo specifico
             try:
-                indicator_series = indicator_func(*args, **kwargs) # Chiamata alla funzione 'ta'
-
-                # Controlli sul risultato della funzione 'ta'
+                indicator_series = indicator_func(*args, **kwargs)
                 if indicator_series is None or not isinstance(indicator_series, pd.Series) or indicator_series.empty:
                     return float('nan')
-
-                # Pulisci NaN/inf e rimuovi eventuali righe NaN risultanti
                 indicator_series = indicator_series.replace([float('inf'), -float('inf')], float('nan')).dropna()
-
-                # Se dopo la pulizia è vuota, non c'è ultimo valore
-                if indicator_series.empty:
-                     return float('nan')
-
-                # Estrai l'ultimo valore (scalare)
+                if indicator_series.empty: return float('nan')
                 last_val = indicator_series.iloc[-1]
-
-                # Restituisci il valore o NaN se è NaN
                 return last_val if pd.notna(last_val) else float('nan')
-
             except Exception:
-                # Se c'è un errore *qualsiasi* durante il calcolo dell'indicatore, restituisci NaN
-                # print(f"Debug: Errore in _safe_calculate per {symbol} ({interval}): {e}") # Debug opzionale
                 return float('nan')
-        # --- Fine Funzione Helper CORRETTA ---
 
-
-        # (Calcolo indicatori usando helper invariato)
         rsi_val = _safe_calculate(ta.momentum.RSIIndicator(df['close'], window=RSI_WINDOW).rsi)
         srsi_val = _safe_calculate(ta.momentum.StochRSIIndicator(df['close'], window=SRSI_WINDOW).stochrsi)
         macd_obj = ta.trend.MACD(df['close'], window_slow=MACD_SLOW, window_fast=MACD_FAST, window_sign=MACD_SIGN)
@@ -165,7 +153,6 @@ def fetch_indicators_with_signals(symbol, interval, period):
             vwap_val = vwap_series.iloc[-1] if not vwap_series.empty and pd.notna(vwap_series.iloc[-1]) else float('nan')
         except Exception: vwap_val = float('nan')
 
-        # (Funzione signal_emoji invariata)
         def signal_emoji(value, low, high, strong_factor=0.33):
             if pd.isna(value): return '⚪ N/A'
             low_strong = low * (1 - strong_factor)
@@ -176,7 +163,6 @@ def fetch_indicators_with_signals(symbol, interval, period):
             elif value > high: return '🔴'
             else: return '🟡'
 
-        # (Assegnazione segnali invariata)
         signals['RSI'] = f"{rsi_val:.2f} {signal_emoji(rsi_val, RSI_LOW, RSI_HIGH)}" if pd.notna(rsi_val) else '⚪ N/A'
         signals['SRSI'] = f"{srsi_val:.2f} {signal_emoji(srsi_val, SRSI_LOW, SRSI_HIGH)}" if pd.notna(srsi_val) else '⚪ N/A'
         signals['MACD'] = f"{macd_val:.2f} {signal_emoji(macd_val, MACD_THRESHOLD_LOW, MACD_THRESHOLD_HIGH, strong_factor=0.5)}" if pd.notna(macd_val) else '⚪ N/A'
@@ -196,11 +182,8 @@ def fetch_indicators_with_signals(symbol, interval, period):
 
         return df, signals
 
-    # Gestione eccezioni *esterne* al calcolo degli indicatori (es. errore download)
     except Exception as e:
-        # print(f"Debug: Errore Exception generico in fetch_indicators_with_signals per {symbol} ({interval}): {e}")
-        # print(traceback.format_exc()) # Utile per debug profondo se necessario
-        return df, signals # Restituisce df vuoto e segnali N/A
+        return df, signals
 
 
 # (Funzione calculate_price_change invariata)
@@ -248,21 +231,24 @@ def calculate_signal_score(hourly_signals, daily_signals):
 
 def main():
     st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-    st.title("📈 Live Crypto Technical Dashboard")
+    st.title("📈 Live Crypto Technical Dashboard (Top 10)") # Titolo aggiornato
 
     # (Expanders invariati)
     with st.expander("ℹ️ Signal Score Legend"): st.markdown(f"""...""")
     with st.expander("📚 Indicators Description"): st.markdown("""...""")
 
-    crypto_symbols = get_top_100_crypto_symbols()
+    # --- MODIFICATA chiamata funzione ---
+    crypto_symbols = get_top_10_crypto_symbols()
+    # --- FINE MODIFICA ---
+
     if not crypto_symbols:
-        st.error("Impossibile recuperare la lista delle criptovalute. Riprova più tardi.")
+        st.error("Impossibile recuperare la lista delle Top 10 criptovalute. Riprova più tardi.")
         return
 
     results = []
     symbols_processed_count = 0
     symbols_valid_count = 0
-    total_symbols = len(crypto_symbols)
+    total_symbols = len(crypto_symbols) # Ora sarà 10 o meno
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -326,7 +312,7 @@ def main():
                                    .set_properties(**{'text-align': 'center'}, subset=['Signal Score', 'RSI (1h)', 'RSI (1d)', 'RSI (1w)', 'RSI (1mo)', 'SRSI (1h)', 'MACD (1d)', 'Doda Stoch (1h)'])
         st.dataframe(styled_df, use_container_width=True, height=None)
     else:
-        st.warning("⚠️ Nessun dato disponibile per le criptovalute al momento. Controlla i log di errore sopra o riprova più tardi.")
+        st.warning("⚠️ Nessun dato disponibile per le Top 10 criptovalute al momento. Controlla i log di errore sopra o riprova più tardi.") # Messaggio warning aggiornato
 
 if __name__ == '__main__':
     main()
