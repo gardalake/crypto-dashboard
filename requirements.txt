@@ -1,5 +1,5 @@
 streamlit
 pandas
 ta
-yfinance
 requests
+pycoingecko
