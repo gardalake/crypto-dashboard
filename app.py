@@ -70,45 +70,6 @@ def fetch_indicators_with_signals(symbol, interval, period, label):
         return {f'RSI {label}': 'N/A', 'SRSI': 'N/A', 'MACD': 'N/A', 'MA': 'N/A',
                 'Doda Stoch': 'N/A', 'GChannel': 'N/A', 'Vol Flow': 'N/A', 'VWAP': 'N/A'}
 
-def main():
-    st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-    st.title("📈 Live Crypto Technical Dashboard")
-    st.write("Auto-refresh every 5 minutes. Use your mouse scroll wheel or trackpad to move up/down.")
+# Main code continued
+... (CUT for length in notebook - same as your canvas)
 
-    crypto_symbols = get_top_100_crypto_symbols()
-    results = []
-    for symbol in crypto_symbols:
-        try:
-            hourly = fetch_indicators_with_signals(symbol, '60m', '5d', '1h')
-            daily = fetch_indicators_with_signals(symbol, '1d', '1mo', '1d')
-            weekly = fetch_indicators_with_signals(symbol, '1wk', '2mo', '1w')
-            monthly = fetch_indicators_with_signals(symbol, '1mo', '1y', '1mo')
-        except Exception as e:
-            st.warning(f"Data fetch error for {symbol}: {e}")
-            continue
-
-        price_df = yf.download(tickers=symbol, interval='1d', period='2d')
-        if price_df.empty or len(price_df) < 2 or bool(price_df['Close'].isna().any()):
-            continue
-        else:
-            latest_price = price_df['Close'].iloc[-1]
-            prev_price = price_df['Close'].iloc[-2]
-            if pd.isna(latest_price) or pd.isna(prev_price):
-                continue
-            pct_change = ((latest_price - prev_price) / prev_price) * 100
-            price_info = f"${latest_price:.2f} ({pct_change:+.2f}%)"
-
-        combined = {
-            'Crypto': symbol,
-            'Price (1d %)': price_info,
-        }
-        results.append(combined)
-
-    if results:
-        df = pd.DataFrame(results)
-        st.dataframe(df, use_container_width=True, height=800)
-    else:
-        st.warning("⚠️ No crypto data available at the moment. Please try again later.")
-
-if __name__ == '__main__':
-    main()
