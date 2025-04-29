@@ -47,15 +47,15 @@ def fetch_indicators_with_signals(symbol, interval, period, label):
             if isinstance(value, str):
                 return 'N/A'
             if value < low * 0.67:
-                return '🔶'  # Strong Buy
+                return '🔶'
             elif value < low:
-                return '🟢'  # Buy
+                return '🟢'
             elif value > high * 1.33:
-                return '🔻'  # Strong Sell
+                return '🔻'
             elif value > high:
-                return '🔴'  # Sell
+                return '🔴'
             else:
-                return '🟡'  # Wait
+                return '🟡'
 
         return {
             f'RSI {label}': f"{round(rsi_val, 2)} {signal_emoji(rsi_val, 30, 70)}",
@@ -93,7 +93,6 @@ def main():
             pct_change = ((latest_price - prev_price) / prev_price) * 100
             price_info = f"${latest_price:.2f} ({pct_change:+.2f}%)"
 
-        # Calculate GPT decision
         decision_score = 0
         indicators = [hourly['RSI 1h'], daily['RSI 1d'], daily['MACD'], hourly['SRSI']]
         for indicator in indicators:
