@@ -43,36 +43,70 @@ def get_coingecko_market_data(ids_list, currency):
         df = pd.DataFrame(data);
         if not df.empty: df.set_index('id', inplace=True)
         return df, timestamp
-    except Exception as e: st.error(f"Errore API Mercato CoinGecko: {e}"); return pd.DataFrame(), timestamp
+    except requests.exceptions.RequestException as req_ex:
+        # Prova a leggere il codice di stato se disponibile
+        status_code = req_ex.response.status_code if req_ex.response is not None else "N/A"
+        st.error(f"Errore API Mercato CoinGecko (Status: {status_code}): {req_ex}")
+        return pd.DataFrame(), timestamp
+    except Exception as e:
+        st.error(f"Errore Processamento Dati Mercato CoinGecko: {e}")
+        return pd.DataFrame(), timestamp
 
 @st.cache_data(ttl=CACHE_TTL * 2, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    time.sleep(0.5)
+    """Ottiene dati storici OHLCV da CoinGecko /market_chart."""
+    # AUMENTATO DELAY per rispettare rate limit API gratuita CoinGecko
+    delay_seconds = 1.5
+    time.sleep(delay_seconds)
+    # st.write(f"Debug: Fetching {interval} for {coin_id} after {delay_seconds}s delay...") # Rimuovi commento per debug
+
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {'vs_currency': currency, 'days': str(days),
               'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
     try:
         response = requests.get(url, params=params, timeout=20)
-        response.raise_for_status(); data = response.json()
-        if not data or 'prices' not in data or not data['prices']: return pd.DataFrame()
+        response.raise_for_status() # Solleva errore per status non 2xx
+        data = response.json()
+        if not data or 'prices' not in data or not data['prices']:
+             # st.warning(f"Debug: Dati 'prices' mancanti o vuoti per {coin_id} ({interval})")
+             return pd.DataFrame(), "No Prices Data" # Aggiunto stato errore
+
         prices_df = pd.DataFrame(data['prices'], columns=['timestamp', 'close'])
         prices_df['timestamp'] = pd.to_datetime(prices_df['timestamp'], unit='ms')
         prices_df.set_index('timestamp', inplace=True)
+
         hist_df = prices_df
         if 'total_volumes' in data and data['total_volumes']:
              volumes_df = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'volume'])
              volumes_df['timestamp'] = pd.to_datetime(volumes_df['timestamp'], unit='ms')
              volumes_df.set_index('timestamp', inplace=True)
              hist_df = prices_df.join(volumes_df, how='outer').interpolate(method='time').ffill().bfill()
-        else: hist_df['volume'] = 0
+        else: hist_df['volume'] = 0 # Assegna 0 se manca volume
+
         hist_df['high'] = hist_df['close']; hist_df['low'] = hist_df['close']; hist_df['open'] = hist_df['close'].shift(1)
         hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
         hist_df.dropna(subset=['close'], inplace=True)
-        return hist_df
-    except Exception as e: return pd.DataFrame()
 
-# --- Funzioni Calcolo Indicatori (Manuali con Pandas) ---
+        if hist_df.empty:
+             # st.warning(f"Debug: DataFrame storico vuoto dopo processamento per {coin_id} ({interval})")
+             return pd.DataFrame(), "Processed Empty"
 
+        return hist_df, "Success" # Ritorna successo
+
+    except requests.exceptions.HTTPError as http_err:
+        if http_err.response.status_code == 429:
+            # st.warning(f"Debug: Rate limit (429) colpito per {coin_id} ({interval})")
+            return pd.DataFrame(), "Rate Limited (429)"
+        else:
+            # st.warning(f"Debug: Errore HTTP {http_err.response.status_code} per {coin_id} ({interval})")
+            return pd.DataFrame(), f"HTTP Error {http_err.response.status_code}"
+    except Exception as e:
+        # st.warning(f"Debug: Errore generico fetch storico per {coin_id} ({interval}): {e}")
+        return pd.DataFrame(), f"Generic Error: {type(e).__name__}"
+
+
+# --- Funzioni Calcolo Indicatori (Manuali con Pandas - Invariate) ---
+# ... (le funzioni calculate_rsi_manual, calculate_macd_manual, etc. rimangono le stesse) ...
 def calculate_rsi_manual(series, period=RSI_PERIOD):
     if not isinstance(series, pd.Series) or series.isna().all(): return np.nan
     series = series.dropna(); len_series = len(series)
@@ -90,13 +124,15 @@ def calculate_rsi_manual(series, period=RSI_PERIOD):
 def calculate_macd_manual(series, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
     if not isinstance(series, pd.Series) or series.isna().all(): return np.nan, np.nan, np.nan
     series = series.dropna()
-    if len(series) < slow : return np.nan, np.nan, np.nan
+    if len(series) < slow : return np.nan, np.nan, np.nan # Richiede almeno 'slow' periodi per EMA
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
     macd_line = ema_fast - ema_slow
+    # Controlla se la linea MACD ha abbastanza punti per calcolare il segnale
     if len(macd_line.dropna()) < signal: return macd_line.iloc[-1], np.nan, np.nan
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     histogram = macd_line - signal_line
+    # Ritorna l'ultimo valore valido di ciascuno
     last_macd = macd_line.iloc[-1] if not pd.isna(macd_line.iloc[-1]) else np.nan
     last_signal = signal_line.iloc[-1] if not pd.isna(signal_line.iloc[-1]) else np.nan
     last_hist = histogram.iloc[-1] if not pd.isna(histogram.iloc[-1]) else np.nan
@@ -115,13 +151,14 @@ def calculate_vwap_manual(df, period=VWAP_PERIOD):
     vwap = (df_period['close'] * df_period['volume']).sum() / df_period['volume'].sum()
     return vwap
 
-# --- Funzione Segnale GPT Migliorata (SINTASSI CORRETTA) ---
+
+# --- Funzioni Segnale (Invariate) ---
+# ... (generate_gpt_signal e generate_gemini_alert rimangono le stesse) ...
 def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, current_price):
     """Genera un segnale più articolato (ma ancora basato su regole)."""
     required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, current_price]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/D"
-    score = 0
-    # Logica punteggio (invariata)
+    score = 0; reasons = []
     if current_price > ma_long: score += 1
     else: score -= 1
     if ma_short > ma_long: score += 2
@@ -138,19 +175,12 @@ def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, cu
     if not pd.isna(rsi_1h):
         if rsi_1h > 60: score += 1
         elif rsi_1h < 40: score -= 1
-    # Mappatura Score (CORRETTA SU PIÙ RIGHE)
-    if score >= 5:
-        return "⚡️ Strong Buy"
-    elif score >= 2:
-        return "🟢 Buy"
-    elif score <= -5:
-        return "🚨 Strong Sell"
-    elif score <= -2:
-        return "🔴 Sell"
-    else:
-        return "🟡 Hold"
+    if score >= 5: return "⚡️ Strong Buy"
+    elif score >= 2: return "🟢 Buy"
+    elif score <= -5: return "🚨 Strong Sell"
+    elif score <= -2: return "🔴 Sell"
+    else: return "🟡 Hold"
 
-# --- Funzione per "Gemini Alert" (Sintassi già corretta) ---
 def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d):
     """Genera un alert specifico basato su forte confluenza di segnali DAILY."""
     if pd.isna(ma_short) or pd.isna(ma_long) or pd.isna(macd_hist) or pd.isna(rsi_1d): return "⏳"
@@ -159,6 +189,7 @@ def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d):
     is_downtrend = ma_short < ma_long; is_momentum_negative = macd_hist < 0; is_not_oversold = rsi_1d > 30
     if is_downtrend and is_momentum_negative and is_not_oversold: return "❌ SELL Signal"
     return "➖"
+
 
 # --- Configurazione Pagina Streamlit ---
 st.set_page_config(layout="wide", page_title="Crypto Tech Dashboard Pro", page_icon="📈")
@@ -185,14 +216,21 @@ for i, coin_id in enumerate(coin_ids_ordered):
     change_7d = live_data.get('price_change_percentage_7d_in_currency', np.nan)
     volume_24h = live_data.get('total_volume', np.nan); market_cap = live_data.get('market_cap', np.nan)
 
-    hist_daily_df = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
-    hist_hourly_df = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_HOURLY, interval='hourly')
+    # --- Fetch Storico con gestione stato ---
+    hist_daily_df, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
+    hist_hourly_df, status_hourly = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_HOURLY, interval='hourly')
 
+    # Aggiungi errori specifici alla lista
+    if status_daily != "Success": fetch_errors.append(f"{symbol}: Dati Daily - {status_daily}")
+    if status_hourly != "Success": fetch_errors.append(f"{symbol}: Dati Hourly - {status_hourly}")
+
+    # Default NaN
     rsi1d, rsi1h, rsi1w = np.nan, np.nan, np.nan
     macd_line, macd_signal, macd_hist = np.nan, np.nan, np.nan
     ma_short, ma_long = np.nan, np.nan; vwap = np.nan
 
-    if not hist_daily_df.empty:
+    # Calcola indicatori SOLO se il fetch DAILY ha avuto successo
+    if status_daily == "Success" and not hist_daily_df.empty:
         rsi1d = calculate_rsi_manual(hist_daily_df['close'])
         macd_line, macd_signal, macd_hist = calculate_macd_manual(hist_daily_df['close'])
         ma_short = calculate_sma_manual(hist_daily_df['close'], MA_SHORT)
@@ -203,14 +241,14 @@ for i, coin_id in enumerate(coin_ids_ordered):
             if len(df_weekly) >= RSI_PERIOD + 1: rsi1w = calculate_rsi_manual(df_weekly)
             else: fetch_errors.append(f"Dati insuff. ({len(df_weekly)} sett.) per RSI 1w per {symbol}.")
         except Exception as e: fetch_errors.append(f"Errore resampling settimanale per {symbol}: {e}")
-        min_len_needed = max(RSI_PERIOD + 1, MACD_SLOW, MA_LONG) # MACD slow è lungo
+        min_len_needed = max(RSI_PERIOD + 1, MACD_SLOW, MA_LONG)
         if len(hist_daily_df) < min_len_needed: fetch_errors.append(f"Dati Daily insuff. ({len(hist_daily_df)}/{min_len_needed}) per indicatori per {symbol}.")
-    else: fetch_errors.append(f"Nessun dato storico Daily da CoinGecko per {symbol}.")
 
-    if not hist_hourly_df.empty:
+    # Calcola indicatore HOURLY SOLO se il fetch HOURLY ha avuto successo
+    if status_hourly == "Success" and not hist_hourly_df.empty:
         if len(hist_hourly_df) >= RSI_PERIOD + 1: rsi1h = calculate_rsi_manual(hist_hourly_df['close'])
         else: fetch_errors.append(f"Dati Hourly insuff. ({len(hist_hourly_df)} ore) per RSI 1h per {symbol}.")
-    else: fetch_errors.append(f"Nessun dato storico Hourly da CoinGecko per {symbol}.")
+
 
     gpt_signal = generate_gpt_signal(rsi1d, rsi1h, rsi1w, macd_hist, ma_short, ma_long, current_price)
     gemini_alert = generate_gemini_alert(ma_short, ma_long, macd_hist, rsi1d)
@@ -226,11 +264,15 @@ for i, coin_id in enumerate(coin_ids_ordered):
 
 progress_bar.empty()
 
+# --- Mostra Errori/Info Raccolti ---
 if fetch_errors:
     with st.expander("ℹ️ Note sul Recupero Dati Storici/Calcolo Indicatori", expanded=False):
-        unique_errors = sorted(list(set(fetch_errors)));
-        for error_msg in unique_errors: st.info(error_msg)
+        unique_errors = sorted(list(set(fetch_errors)))
+        for error_msg in unique_errors:
+            if "Rate Limited" in error_msg: st.warning(error_msg) # Warning per rate limit
+            else: st.info(error_msg) # Info per altri problemi
 
+# --- Crea e Visualizza DataFrame (Logica di visualizzazione invariata) ---
 if results:
     df = pd.DataFrame(results); df.set_index('Rank', inplace=True)
     # GPT Signal già aggiunto sopra
@@ -259,7 +301,7 @@ if results:
             else: formatters[col] = lambda x: str(x) if pd.notna(x) else "N/A"
             df_display[col] = df_display[col].apply(formatters[col])
         elif df_display[col].dtype == 'object': df_display[col].fillna("N/A", inplace=True)
-    df_display.fillna("N/A", inplace=True) # Catchall finale per sicurezza
+    df_display.fillna("N/A", inplace=True)
 
     def highlight_pct_col(col):
         colors = [''] * len(col)
@@ -283,10 +325,10 @@ if results:
     st.dataframe(styled_df, use_container_width=True)
 else: st.warning("Nessun risultato da visualizzare.")
 
-# --- Legenda Aggiornata ---
+# --- Legenda Aggiornata (Invariata) ---
 st.divider()
 with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=True):
-    # (Contenuto legenda invariato rispetto alla versione precedente - già aggiornato)
+    # ... (Contenuto legenda invariato rispetto alla versione precedente) ...
     st.markdown("""
     Questa sezione spiega gli indicatori e i segnali visualizzati nella tabella. Ricorda che l'analisi tecnica è uno strumento e non una garanzia di risultati futuri. **Questa dashboard è solo a scopo informativo e non costituisce consulenza finanziaria.**
 
@@ -326,6 +368,6 @@ st.divider()
 col1, col2 = st.columns([1, 5])
 with col1:
     if st.button("🔄 Aggiorna", help="Forza l'aggiornamento dei dati"):
-        st.cache_data.clear(); st.rerun() # Messo su una riga per brevità qui
+        st.cache_data.clear(); st.rerun()
 with col2:
     st.caption(f"Ultimo aggiornamento live: {last_cg_update.strftime('%H:%M:%S')} | Disclaimer: Non è consulenza finanziaria.")
