@@ -1,294 +1,357 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import requests
 import numpy as np
-from datetime import datetime
-import time # Per throttling richieste yfinance (anche se la cache aiuta)
+import pandas_ta as ta # Import pandas-ta
+from datetime import datetime, timedelta
+import time # Per throttling richieste (anche se la cache aiuta)
+import math # Per calcoli VWAP
 
 # --- Configurazione Globale ---
-SYMBOLS_YF = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD"] # Tickers per yFinance
-COINGECKO_IDS = "bitcoin,ethereum,binancecoin,solana,ripple" # IDs per CoinGecko API
-VS_CURRENCY = "usd"
-CACHE_TTL = 300 # Cache di 5 minuti (300 sec)
-YF_HISTORY_PERIOD = "6mo" # Aumentato periodo storico per robustezza indicatori
-YF_HISTORY_INTERVAL = "1d"
+# Lista delle crypto da monitorare (Simboli comuni)
+# Assicurati che questi simboli siano mappabili agli ID di CoinGecko sotto
+SYMBOLS = ["BTC", "ETH", "BNB", "SOL", "XRP"]
+VS_CURRENCY = "usd" # Valuta di riferimento
+CACHE_TTL = 300 # Cache di 5 minuti (300 sec) per dati API
+DAYS_HISTORY = 365 # Giorni di storico da scaricare per indicatori daily/weekly/monthly
 
-# Periodi Indicatori
+# Mappatura (può essere espansa o caricata dinamicamente)
+# Chiave: Simbolo (usato per visualizzazione), Valore: ID CoinGecko (usato per API)
+# Ottenuta da API CoinGecko /coins/list o nota
+SYMBOL_TO_ID_MAP = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "XRP": "ripple",
+    # Aggiungi altre coppie se necessario
+}
+# Crea mappa inversa per lookup facile
+ID_TO_SYMBOL_MAP = {v: k for k, v in SYMBOL_TO_ID_MAP.items()}
+COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
+
+# Periodi Indicatori standard (usati da pandas-ta)
 RSI_PERIOD = 14
+SRSI_PERIOD = 14
+SRSI_K = 3
+SRSI_D = 3
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 MA_SHORT = 20
 MA_LONG = 50
+VWAP_PERIOD = 14 # Giorni per VWAP basato su dati giornalieri
 
-# --- Funzioni Fetch Dati ---
+# --- Funzioni API CoinGecko ---
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Caricamento prezzi live (CoinGecko)...")
-def get_current_prices_coingecko(ids, currency):
-    """Ottiene i prezzi correnti da CoinGecko."""
+def get_coingecko_current_prices(ids_list, currency):
+    """Ottiene i prezzi correnti e la variazione 24h da CoinGecko."""
+    ids_string = ",".join(ids_list)
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
-        "ids": ids,
-        "vs_currencies": currency
+        "ids": ids_string,
+        "vs_currencies": currency,
+        "include_24hr_change": "true"
     }
     prices = {}
+    changes = {}
+    timestamp = datetime.now()
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
         for coin_id, price_data in data.items():
             prices[coin_id] = price_data.get(currency, np.nan)
-        return prices, datetime.now() # Ritorna anche timestamp
+            changes[coin_id] = price_data.get(f"{currency}_24h_change", np.nan)
+        return prices, changes, timestamp
     except requests.exceptions.RequestException as e:
-        st.error(f"Errore API CoinGecko: {e}")
-        return {}, datetime.now()
+        st.error(f"Errore API Prezzi CoinGecko: {e}")
+        return {}, {}, timestamp
     except Exception as e:
-        st.error(f"Errore processamento dati CoinGecko: {e}")
-        return {}, datetime.now()
+        st.error(f"Errore Processamento Prezzi CoinGecko: {e}")
+        return {}, {}, timestamp
 
+# NOTA: La cache qui usa l'ID della coin per distinguere le chiamate
 @st.cache_data(ttl=CACHE_TTL * 2, show_spinner=False) # Cache più lunga per dati storici
-def get_price_history_yf(symbol, period=YF_HISTORY_PERIOD, interval=YF_HISTORY_INTERVAL):
-    """Ottiene dati storici da yFinance."""
-    # time.sleep(0.1) # Piccolo delay opzionale
+def get_coingecko_historical_data(coin_id, currency, days):
+    """Ottiene dati storici (prezzi, volumi) da CoinGecko /market_chart."""
+    time.sleep(0.3) # Delay per rispettare rate limit API gratuita CoinGecko
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    params = {
+        'vs_currency': currency,
+        'days': str(days), # 'max' per tutto lo storico, o numero giorni
+        'interval': 'daily' if days > 90 else '', # Richiedi daily se > 90gg, altrimenti lascia auto
+        'precision': 'full' # Chiedi massima precisione
+    }
     try:
-        ticker = yf.Ticker(symbol)
-        data = ticker.history(period=period, interval=interval, auto_adjust=True)
-        data.rename(columns={"Close": "price"}, inplace=True, errors='ignore') # Rinomina se 'Close' esiste
-        # Assicurati che la colonna 'price' esista
-        if 'price' not in data.columns:
-             # Fallback se auto_adjust=False o per altre ragioni 'Close' non c'è
-             if 'Close' in data.columns:
-                  data['price'] = data['Close']
-             else:
-                  # st.warning(f"Colonna 'price' o 'Close' non trovata per {symbol}")
-                  return pd.DataFrame() # Ritorna vuoto se non c'è prezzo
+        response = requests.get(url, params=params, timeout=20) # Timeout più lungo per storico
+        response.raise_for_status()
+        data = response.json()
 
-        # Rimuovi eventuali righe con NaN nel prezzo (potrebbero invalidare i calcoli)
-        data.dropna(subset=['price'], inplace=True)
+        if not data or 'prices' not in data or not data['prices']:
+             return pd.DataFrame() # Ritorna vuoto se non ci sono dati prezzo
 
-        if data.empty:
-             # st.info(f"Debug: Nessun dato storico valido trovato da yFinance per {symbol} ({period}/{interval})")
-             return pd.DataFrame()
+        # Converti prezzi in DataFrame (timestamp, prezzo)
+        prices_df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
+        prices_df['timestamp'] = pd.to_datetime(prices_df['timestamp'], unit='ms')
+        prices_df.set_index('timestamp', inplace=True)
 
-        return data[['price']] # Ritorna solo la colonna prezzo valida
+        # Converti volumi in DataFrame (timestamp, volume) - SE ESISTONO
+        volumes_df = None
+        if 'total_volumes' in data and data['total_volumes']:
+             volumes_df = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'volume'])
+             volumes_df['timestamp'] = pd.to_datetime(volumes_df['timestamp'], unit='ms')
+             volumes_df.set_index('timestamp', inplace=True)
+
+             # Unisci prezzi e volumi basandoti sul timestamp (indice)
+             hist_df = prices_df.join(volumes_df, how='inner') # 'inner' per avere solo timestamp con entrambi
+        else:
+            # Se non ci sono volumi, ritorna solo i prezzi e metti volume a NaN o 0
+            hist_df = prices_df
+            hist_df['volume'] = 0 # O np.nan, a seconda di come pandas-ta gestisce NaN in VWAP
+
+        # Aggiungi colonne High, Low, Open (approssimate dai dati giornalieri/orari se non presenti)
+        # Per /market_chart, abbiamo solo 'price' (che è il Close).
+        # pandas-ta può funzionare spesso anche solo con 'close', ma alcuni indicatori richiedono OHLC.
+        # Per ora lavoriamo solo con 'price' (Close) e 'volume'.
+        hist_df.rename(columns={'price': 'close'}, inplace=True) # Rinomina per pandas-ta
+
+        # Rimuovi eventuali duplicati di indice (timestamp) mantenendo l'ultimo
+        hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
+
+        return hist_df
+
+    except requests.exceptions.RequestException as e:
+        # Non mostrare errore qui direttamente per non affollare, verrà gestito dopo
+        # st.warning(f"API Error fetching history for {coin_id}: {e}")
+        return pd.DataFrame() # Ritorna DataFrame vuoto in caso di errore
     except Exception as e:
-        # st.warning(f"Debug: Errore yfinance per {symbol}: {e}")
+        # st.warning(f"Processing Error fetching history for {coin_id}: {e}")
         return pd.DataFrame()
 
-# --- Funzioni Calcolo Indicatori ---
+# --- Funzione Calcolo Indicatori con Pandas TA ---
+def calculate_indicators(df_hist):
+    """Calcola indicatori tecnici usando pandas-ta."""
+    indicators = {}
+    if df_hist.empty or len(df_hist) < 10: # Minimo arbitrario per qualsiasi calcolo
+        return indicators # Ritorna dizionario vuoto se non ci sono dati
 
-def calculate_rsi(series, period=RSI_PERIOD):
-    """Calcola l'RSI in modo robusto."""
-    if not isinstance(series, pd.Series) or series.isna().all(): return np.nan
-    series = series.dropna() # Lavora solo sui dati validi
-    if len(series) < period + 1: return np.nan # Non ci sono abbastanza dati
+    # Calcola indicatori richiesti (aggiungi strategia se vuoi usare .strategy)
+    try:
+        # RSI (Daily)
+        df_hist.ta.rsi(length=RSI_PERIOD, append=True) # Appende colonna 'RSI_14'
+        indicators['RSI_1d'] = df_hist['RSI_14'].iloc[-1] if 'RSI_14' in df_hist.columns and not pd.isna(df_hist['RSI_14'].iloc[-1]) else np.nan
 
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0) # Assicura che loss sia sempre >= 0
+        # SRSI (Daily)
+        df_hist.ta.stochrsi(length=RSI_PERIOD, rsi_length=RSI_PERIOD, k=SRSI_K, d=SRSI_D, append=True)
+        # pandas-ta appende 'STOCHRSIk_14_14_3_3' e 'STOCHRSId_14_14_3_3'
+        srsi_k_col = f'STOCHRSIk_{RSI_PERIOD}_{RSI_PERIOD}_{SRSI_K}_{SRSI_D}'
+        srsi_d_col = f'STOCHRSId_{RSI_PERIOD}_{RSI_PERIOD}_{SRSI_K}_{SRSI_D}'
+        indicators['SRSI_k'] = df_hist[srsi_k_col].iloc[-1] if srsi_k_col in df_hist.columns and not pd.isna(df_hist[srsi_k_col].iloc[-1]) else np.nan
+        indicators['SRSI_d'] = df_hist[srsi_d_col].iloc[-1] if srsi_d_col in df_hist.columns and not pd.isna(df_hist[srsi_d_col].iloc[-1]) else np.nan
 
-    # Usa EWM (Exponential Moving Average) per calcolare media di gain/loss - più stabile di SMA per RSI
-    avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
-    avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
+        # MACD (Daily)
+        df_hist.ta.macd(fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL, append=True)
+        # Appende MACD_12_26_9, MACDh_12_26_9 (histogram), MACDs_12_26_9 (signal)
+        macd_hist_col = f'MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}'
+        indicators['MACD_Hist'] = df_hist[macd_hist_col].iloc[-1] if macd_hist_col in df_hist.columns and not pd.isna(df_hist[macd_hist_col].iloc[-1]) else np.nan
 
-    # Recupera l'ultimo valore calcolato
-    last_avg_gain = avg_gain.iloc[-1]
-    last_avg_loss = avg_loss.iloc[-1]
+        # SMA (Daily)
+        df_hist.ta.sma(length=MA_SHORT, append=True) # Appende 'SMA_20'
+        indicators['MA_Short'] = df_hist[f'SMA_{MA_SHORT}'].iloc[-1] if f'SMA_{MA_SHORT}' in df_hist.columns and not pd.isna(df_hist[f'SMA_{MA_SHORT}'].iloc[-1]) else np.nan
+        df_hist.ta.sma(length=MA_LONG, append=True) # Appende 'SMA_50'
+        indicators['MA_Long'] = df_hist[f'SMA_{MA_LONG}'].iloc[-1] if f'SMA_{MA_LONG}' in df_hist.columns and not pd.isna(df_hist[f'SMA_{MA_LONG}'].iloc[-1]) else np.nan
 
-    if pd.isna(last_avg_gain) or pd.isna(last_avg_loss): return np.nan # Se EWM non ha abbastanza dati
+        # VWAP (Daily) - Richiede High, Low, Close, Volume. /market_chart non li ha tutti.
+        # pandas-ta calcola VWAP se trova 'high', 'low', 'close', 'volume'.
+        # Tentiamo di creare HLC approssimati dal close giornaliero (non ideale!)
+        # Se 'volume' non è stato aggiunto prima, VWAP fallirà silenziosamente.
+        if 'volume' in df_hist.columns and df_hist['volume'].notna().any():
+             # Crea HLC fittizi per permettere il calcolo (MOLTO APPROSSIMATO!)
+             # Se si vogliono HLC reali, serve un'altra fonte API
+             df_hist['high'] = df_hist['close'] # Stima
+             df_hist['low'] = df_hist['close']  # Stima
+             df_hist['open'] = df_hist['close'].shift(1) # Stima
+             df_hist.ta.vwap(length=VWAP_PERIOD, append=True) # Richiede HLCV
+             vwap_col = f'VWAP_{VWAP_PERIOD}'
+             indicators['VWAP'] = df_hist[vwap_col].iloc[-1] if vwap_col in df_hist.columns and not pd.isna(df_hist[vwap_col].iloc[-1]) else np.nan
+        else:
+             indicators['VWAP'] = np.nan # Volume mancante
 
-    if last_avg_loss == 0:
-        return 100.0 if last_avg_gain > 0 else 50.0
-    
-    rs = last_avg_gain / last_avg_loss
-    rsi = 100.0 - (100.0 / (1.0 + rs))
-    return rsi
+    except Exception as e:
+        # st.warning(f"Errore durante calcolo indicatori: {e}")
+        # Ritorna NaN per gli indicatori se c'è un errore nel calcolo
+        keys = ['RSI_1d', 'SRSI_k', 'SRSI_d', 'MACD_Hist', 'MA_Short', 'MA_Long', 'VWAP']
+        for k in keys: indicators.setdefault(k, np.nan) # Imposta a NaN se non già presente
 
-def calculate_macd(series, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
-    """Calcola MACD, Signal Line, e Histogram."""
-    if not isinstance(series, pd.Series) or series.isna().all(): return np.nan, np.nan, np.nan
-    series = series.dropna()
-    if len(series) < slow + signal: return np.nan, np.nan, np.nan # Dati insufficienti
+    return indicators
 
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-    
-    # Ritorna gli ultimi valori
-    return macd_line.iloc[-1], signal_line.iloc[-1], histogram.iloc[-1]
+# --- Funzione Segnale GPT Semplificato ---
+def generate_signal(rsi_val, macd_hist_val, ma_short_val, ma_long_val):
+    """Genera un segnale esemplificativo basato su alcuni indicatori."""
+    if pd.isna(rsi_val) or pd.isna(macd_hist_val) or pd.isna(ma_short_val) or pd.isna(ma_long_val):
+        return "⚪️ N/D" # Non disponibile se mancano dati
 
-def calculate_ma(series, period):
-    """Calcola la Media Mobile Semplice (SMA)."""
-    if not isinstance(series, pd.Series) or series.isna().all(): return np.nan
-    series = series.dropna()
-    if len(series) < period: return np.nan
-    return series.rolling(window=period).mean().iloc[-1]
+    score = 0
+    # RSI
+    if rsi_val < 30: score += 2
+    elif rsi_val < 40: score += 1
+    elif rsi_val > 70: score -= 2
+    elif rsi_val > 60: score -= 1
 
-def calculate_change_pct(series):
-    """Calcola la variazione percentuale tra gli ultimi due punti."""
-    if not isinstance(series, pd.Series) or series.isna().all(): return np.nan
-    series = series.dropna()
-    if len(series) < 2: return np.nan
+    # MACD Histogram
+    if macd_hist_val > 0: score += 1
+    else: score -= 1
 
-    last_price = series.iloc[-1]
-    prev_price = series.iloc[-2]
-    if pd.isna(last_price) or pd.isna(prev_price) or prev_price == 0: return np.nan
-    
-    change = ((last_price - prev_price) / prev_price) * 100
-    return change
+    # MA Crossover
+    if ma_short_val > ma_long_val: score += 1
+    else: score -= 1
+
+    # Mappa score
+    if score >= 3: return "🔶 Strong Buy"
+    elif score >= 1: return "🟢 Buy"
+    elif score <= -3: return "🔻 Strong Sell"
+    elif score <= -1: return "🔴 Sell"
+    else: return "🟡 Hold"
 
 # --- Configurazione Pagina Streamlit ---
-st.set_page_config(layout="wide")
-st.title("📊 Crypto Dashboard LIVE – Indicatori Tecnici + GPT Signal")
-st.caption(f"Dati live da CoinGecko, Indicatori da yFinance. Cache: {CACHE_TTL}s. Periodo Storico Usato: {YF_HISTORY_PERIOD}")
+st.set_page_config(layout="wide", page_title="Crypto Tech Dashboard (CoinGecko)", page_icon="🦎")
+st.title("🦎 Crypto Technical Dashboard (CoinGecko API)")
+st.caption(f"Dati live e storici da CoinGecko API. Cache: {CACHE_TTL}s.")
 
 # --- Logica Principale ---
-ticker_to_id_map = {"BTC-USD": "bitcoin", "ETH-USD": "ethereum", "BNB-USD": "binancecoin", "SOL-USD": "solana", "XRP-USD": "ripple"}
-id_to_ticker_map = {v: k for k, v in ticker_to_id_map.items()}
-
-cg_prices, last_cg_update = get_current_prices_coingecko(COINGECKO_IDS, VS_CURRENCY)
+cg_prices_dict, cg_changes_dict, last_cg_update = get_coingecko_current_prices(COINGECKO_IDS_LIST, VS_CURRENCY)
 
 results = []
-yf_fetch_errors = [] # Lista per tracciare errori yfinance
+fetch_errors = [] # Traccia errori fetch storico
 
 progress_bar = st.progress(0, text="Analisi Criptovalute...")
 
-for i, yf_symbol in enumerate(SYMBOLS_YF):
-    coingecko_id = ticker_to_id_map.get(yf_symbol)
-    if not coingecko_id: continue # Salta se non c'è mapping
+for i, coin_id in enumerate(COINGECKO_IDS_LIST):
+    symbol = ID_TO_SYMBOL_MAP.get(coin_id, coin_id.capitalize()) # Usa ID se simbolo non trovato
 
-    current_price = cg_prices.get(coingecko_id, np.nan)
+    current_price = cg_prices_dict.get(coin_id, np.nan)
+    change_24h = cg_changes_dict.get(coin_id, np.nan)
 
-    # Fetch storico (usa la cache)
-    hist = get_price_history_yf(yf_symbol)
+    # Fetch storico
+    hist_df = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY)
 
-    # Variabili per indicatori (default NaN)
-    change_24h = np.nan
-    rsi1d = np.nan
-    macd_line, macd_signal_val, macd_hist = np.nan, np.nan, np.nan
-    ma_short, ma_long = np.nan, np.nan
-
-    # Controlla se abbiamo dati storici PRIMA di calcolare
-    if not hist.empty:
-        # Stampa di Debug (opzionale)
-        # st.write(f"Debug: {yf_symbol} - Dati Storici: {len(hist)} righe")
-
-        change_24h = calculate_change_pct(hist['price'])
-
-        # Calcola indicatori solo se ci sono abbastanza dati
-        if len(hist) >= RSI_PERIOD + 1:
-            rsi1d = calculate_rsi(hist['price'])
-        else:
-            # Registra info per l'utente
-             yf_fetch_errors.append(f"Dati insufficienti ({len(hist)} punti) per RSI 1d per {yf_symbol}.")
-
-        if len(hist) >= MACD_SLOW + MACD_SIGNAL:
-             macd_line, macd_signal_val, macd_hist = calculate_macd(hist['price'])
-        else:
-             yf_fetch_errors.append(f"Dati insufficienti ({len(hist)} punti) per MACD per {yf_symbol}.")
-        
-        if len(hist) >= MA_SHORT:
-             ma_short = calculate_ma(hist['price'], MA_SHORT)
-        else:
-             yf_fetch_errors.append(f"Dati insufficienti ({len(hist)} punti) per MA({MA_SHORT}d) per {yf_symbol}.")
-
-        if len(hist) >= MA_LONG:
-             ma_long = calculate_ma(hist['price'], MA_LONG)
-        else:
-             yf_fetch_errors.append(f"Dati insufficienti ({len(hist)} punti) per MA({MA_LONG}d) per {yf_symbol}.")
-
+    # Calcola indicatori
+    if not hist_df.empty:
+        indicators = calculate_indicators(hist_df.copy()) # Passa una copia per evitare side effects
     else:
-        # Registra errore se yfinance non ha restituito dati
-        yf_fetch_errors.append(f"Nessun dato storico restituito da yFinance per {yf_symbol}.")
-
-    # --- Visualizzazione Prezzo ---
-    price_display = f"${current_price:,.2f}" if not pd.isna(current_price) else "N/A"
-    change_display = f" ({change_24h:+.2f}%)" if not pd.isna(change_24h) else ""
-    full_price_display = f"{price_display}{change_display}" if price_display != "N/A" else "N/A"
-
-    # --- GPT Signal (basato su % change e RSI ora) ---
-    gpt = "🟡 Hold" # Default
-    if not pd.isna(change_24h) and not pd.isna(rsi1d):
-        if change_24h >= 1.5 and rsi1d < 65: gpt = "🔶 Strong Buy"
-        elif change_24h >= 0.5 and rsi1d < 60: gpt = "🟢 Buy"
-        elif change_24h <= -1.5 and rsi1d > 35: gpt = "🔻 Strong Sell"
-        elif change_24h <= -0.5 and rsi1d > 40: gpt = "🔴 Sell"
-    elif not pd.isna(change_24h): # Fallback solo su % change se RSI manca
-        if change_24h >= 2: gpt = "🔶 Strong Buy"
-        elif change_24h >= 1: gpt = "🟢 Buy"
-        elif change_24h <= -2: gpt = "🔻 Strong Sell"
-        elif change_24h <= -1: gpt = "🔴 Sell"
-
+        indicators = {} # Dizionario vuoto se non ci sono dati storici
+        fetch_errors.append(f"Dati storici non disponibili o errore API per {symbol} ({coin_id}). Indicatori non calcolati.")
 
     # --- Assembla Risultati ---
     results.append({
-        "Crypto": yf_symbol,
-        f"Prezzo ({VS_CURRENCY.upper()})": full_price_display,
-        "GPT Signal": gpt,
-        "RSI 1h": "N/A",
-        "RSI 1d": f"{rsi1d:.2f}" if not pd.isna(rsi1d) else "N/A", # Mostra RSI calcolato
-        "RSI 1w": "N/A",
-        "RSI 1mo": "N/A",
-        "MACD Hist": f"{macd_hist:.2f}" if not pd.isna(macd_hist) else "N/A",
-        "MA Short": f"{ma_short:.2f}" if not pd.isna(ma_short) else "N/A",
-        "MA Long": f"{ma_long:.2f}" if not pd.isna(ma_long) else "N/A",
-        # Placeholder non implementati
-        "SRSI": "N/A", "Doda Stoch": "N/A", "GChannel": "N/A", "Volume Flow": "N/A", "VWAP": "N/A"
+        "Symbol": symbol,
+        "ID": coin_id, # Tieni ID per riferimento interno se serve
+        f"Prezzo ({VS_CURRENCY.upper()})": current_price,
+        "% 24h": change_24h,
+        "RSI (1d)": indicators.get('RSI_1d', np.nan),
+        "SRSI k (1d)": indicators.get('SRSI_k', np.nan),
+        #"SRSI d (1d)": indicators.get('SRSI_d', np.nan), # Spesso ridondante, mostriamo solo k
+        "MACD Hist (1d)": indicators.get('MACD_Hist', np.nan),
+        f"MA({MA_SHORT}d)": indicators.get('MA_Short', np.nan),
+        f"MA({MA_LONG}d)": indicators.get('MA_Long', np.nan),
+        "VWAP (1d)": indicators.get('VWAP', np.nan),
+        # Placeholder non implementati / non specificati
+        "RSI (1h)": "N/A", "RSI (1w)": "N/A", "RSI (1mo)": "N/A", # Da affinare
+        "Doda Stoch": "N/A", "GChannel": "N/A", "Volume Flow": "N/A",
     })
 
-    progress_bar.progress((i + 1) / len(SYMBOLS_YF), text=f"Analisi Criptovalute... ({yf_symbol})")
+    progress_bar.progress((i + 1) / len(COINGECKO_IDS_LIST), text=f"Analisi Criptovalute... ({symbol})")
 
 progress_bar.empty()
 
 # --- Mostra Errori/Info Raccolti ---
-if yf_fetch_errors:
-    with st.expander("ℹ️ Note sul Calcolo Indicatori", expanded=False):
-        for error_msg in set(yf_fetch_errors): # Usa set per evitare duplicati
+if fetch_errors:
+    with st.expander("ℹ️ Note sul Recupero Dati Storici (CoinGecko)", expanded=False):
+        unique_errors = sorted(list(set(fetch_errors)))
+        for error_msg in unique_errors:
             st.info(error_msg)
 
 # --- Crea e Visualizza DataFrame ---
 if results:
     df = pd.DataFrame(results)
 
+    # Calcola segnale GPT dopo aver assemblato il DataFrame completo
+    df['GPT Signal'] = df.apply(lambda row: generate_signal(
+                                    row.get('RSI (1d)'),
+                                    row.get('MACD Hist (1d)'),
+                                    row.get(f'MA({MA_SHORT}d)'),
+                                    row.get(f'MA({MA_LONG}d)')
+                                ), axis=1)
+
+
+    # Seleziona e ordina colonne per la visualizzazione
+    cols_order = [
+        "Symbol", f"Prezzo ({VS_CURRENCY.upper()})", "% 24h", "GPT Signal",
+        "RSI (1d)", "SRSI k (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)",
+        # Aggiungere qui le altre colonne N/A se si vogliono mostrare
+        # "RSI (1h)", "RSI (1w)", "RSI (1mo)", "Doda Stoch", "GChannel", "Volume Flow"
+    ]
+    cols_to_show = [col for col in cols_order if col in df.columns]
+    df_display = df[cols_to_show].copy() # Crea copia per evitare SettingWithCopyWarning
+
+    # Formattazione numerica e N/A
+    numeric_cols = df_display.select_dtypes(include=np.number).columns
+    formatters = {}
+    currency_col = f"Prezzo ({VS_CURRENCY.upper()})"
+    pct_col = "% 24h"
+
+    for col in numeric_cols:
+        if col == currency_col:
+            formatters[col] = lambda x: f"${x:,.4f}" if pd.notna(x) else "N/A" # 4 decimali per prezzo
+        elif col == pct_col:
+             formatters[col] = lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A" # 2 decimali con segno per %
+        elif "RSI" in col or "SRSI" in col:
+             formatters[col] = lambda x: f"{x:.1f}" if pd.notna(x) else "N/A" # 1 decimale per RSI/SRSI
+        elif "MACD" in col:
+            formatters[col] = lambda x: f"{x:.4f}" if pd.notna(x) else "N/A" # 4 decimali per MACD
+        elif "MA" in col or "VWAP" in col:
+             formatters[col] = lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A" # 2 decimali per MA/VWAP
+
+    # Applica formattazione manuale (st.dataframe ha problemi con NaNs a volte)
+    for col, func in formatters.items():
+        if col in df_display.columns:
+             df_display[col] = df_display[col].apply(func)
+
+    # Sostituisci eventuali NaN rimasti (non numerici?) con "N/A"
+    df_display.fillna("N/A", inplace=True)
+
     # Funzione per colorare la percentuale
-    def highlight_pct(val):
-        if isinstance(val, str) and '%' in val and '(' in val:
+    def highlight_pct_val(val):
+        if isinstance(val, str) and val.endswith('%'):
             try:
-                num_str = val[val.rfind('(')+1 : val.rfind('%')]
-                num = float(num_str)
+                num = float(val.replace('%',''))
                 if num > 0: return 'color: green'
                 elif num < 0: return 'color: red'
             except ValueError: return ''
         return ''
 
-    # Applica lo stile (usa .map per compatibilità futura)
     st.dataframe(
-        df.style.map(highlight_pct, subset=[f"Prezzo ({VS_CURRENCY.upper()})"]),
+        df_display.style.map(highlight_pct_val, subset=[pct_col]), # Usa .map sulla colonna %
         use_container_width=True,
         hide_index=True,
-         # Configurazione colonne per allineamento e formati se necessario
-         # Esempio:
-        # column_config={
-        #     "RSI 1d": st.column_config.NumberColumn(format="%.2f"),
-        #     "MACD Hist": st.column_config.NumberColumn(format="%.2f"),
-        #      ...etc
-        # }
-        )
+        # Si potrebbe usare column_config ma la formattazione manuale sopra è più robusta con N/A
+    )
 else:
-    st.warning("Nessun risultato da visualizzare.")
+    st.warning("Nessun risultato da visualizzare. Controlla le note sul recupero dati.")
 
 # --- Legenda ---
 st.markdown("### ℹ️ Indicatori Tecnici - Legenda")
 st.markdown(f"""
-- **RSI (Relative Strength Index)**: misura la forza di un trend (0–100), sopra 70 è ipercomprato, sotto 30 è ipervenduto. (Calcolato su dati giornalieri, periodo {RSI_PERIOD})
-- **MACD (Moving Average Convergence Divergence)**: confronto di medie mobili (EMA {MACD_FAST}, {MACD_SLOW}, Signal {MACD_SIGNAL}), segnala cambi di tendenza. L'Istogramma (Hist) mostra il momentum. (Calcolato su dati giornalieri)
-- **MA (Simple Moving Average)**: Media mobile semplice. (Calcolata su dati giornalieri, periodi {MA_SHORT} e {MA_LONG})
-- **GPT Signal**: decisione AI *semplificata* basata sulla variazione % giornaliera e RSI. **Non è consulenza finanziaria.**
-- *SRSI, Doda Stoch, GChannel, Volume Flow, VWAP, RSI (1h, 1w, 1mo)*: Non implementati in questa versione (N/A).
+* **RSI (Relative Strength Index):** Indicatore di momentum (0-100). >70 Ipercomprato, <30 Ipervenduto. (Calcolato su dati giornalieri, periodo {RSI_PERIOD})
+* **SRSI k (Stochastic RSI %K):** Versione stocastica dell'RSI per identificare cicli brevi. (Calcolato su dati giornalieri)
+* **MACD Hist (Moving Average Convergence Divergence Histogram):** Differenza tra linea MACD e linea segnale. Indica momentum. (Calcolato su dati giornalieri)
+* **MA (Simple Moving Average):** Media mobile semplice del prezzo. (Calcolata su dati giornalieri, periodi {MA_SHORT} e {MA_LONG})
+* **VWAP (Volume Weighted Average Price):** Prezzo medio ponderato per volume. (Calcolato su dati giornalieri - *approssimato data la mancanza di HLC*)
+* **GPT Signal:** Segnale *esemplificativo* basato su RSI, MACD Hist, MA Crossover. **Non è consulenza finanziaria.**
+* *RSI (1h, 1w, 1mo), Doda Stoch, GChannel, Volume Flow:* Non implementati o richiedono dati/logica specifica (N/A).
 """)
 
 st.markdown(f"⏱️ Prezzi live aggiornati da CoinGecko circa alle: **{last_cg_update.strftime('%Y-%m-%d %H:%M:%S')}** (Cache: {CACHE_TTL}s)")
