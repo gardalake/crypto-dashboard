@@ -2,112 +2,50 @@
 import streamlit as st
 import pandas as pd
 import requests
-import random
 
 st.set_page_config(layout="wide")
-st.title("📊 Crypto Dashboard LIVE — Indicatori Tecnici & GPT Signal")
+st.title("📊 Crypto Dashboard LIVE – Binance API + RSI")
 
-# Funzione per ottenere i dati da CoinGecko
-@st.cache_data(ttl=300)
-def get_live_data():
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        "vs_currency": "usd",
-        "ids": "bitcoin,ethereum,binancecoin,solana,ripple",
-        "order": "market_cap_desc"
-    }
+# Funzione per ottenere i dati da Binance (OHLC)
+def get_binance_klines(symbol="BTCUSDT", interval="1h", limit=100):
+    url = f"https://api.binance.com/api/v3/klines"
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
     r = requests.get(url, params=params)
-    return r.json()
+    data = r.json()
+    df = pd.DataFrame(data, columns=[
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "quote_asset_volume", "number_of_trades",
+        "taker_buy_base", "taker_buy_quote", "ignore"
+    ])
+    df["close"] = pd.to_numeric(df["close"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    return df[["timestamp", "close"]]
 
-# Calcolo GPT Signal
-def calculate_signal(change):
-    if change is None:
-        return "❔ N/A"
-    if change >= 2:
-        return "🔶 Strong Buy"
-    elif change >= 1:
-        return "🟢 Buy"
-    elif change <= -2:
-        return "🔻 Strong Sell"
-    elif change <= -1:
-        return "🔴 Sell"
-    else:
-        return "🟡 Hold"
+# Calcolo RSI manuale
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
-# Simulazione indicatori (in attesa di calcolo reale)
-def safe_random():
-    return round(random.uniform(0, 100), 2)
+# Ottieni dati Binance
+df = get_binance_klines("BTCUSDT", "1h", 100)
+df["RSI"] = compute_rsi(df["close"])
 
-def simulate_indicator():
-    return random.choice([round(random.uniform(0.1, 1.5), 2), 'N/A'])
+# Visualizzazione tabella
+latest_price = df["close"].iloc[-1]
+latest_rsi = df["RSI"].iloc[-1]
 
-data = get_live_data()
-rows = []
+st.metric("🪙 BTC/USDT Price", f"${latest_price:,.2f}")
+st.metric("📈 RSI (1h)", f"{latest_rsi:.2f}")
 
-for coin in data:
-    try:
-        price = coin['current_price']
-        change = coin.get('price_change_percentage_24h', None)
-        price_str = f"${price:,.2f}" if price else "N/A"
-        pct_str = f"{price_str} ({change:+.2f}%)" if change is not None else "N/A"
-    except:
-        pct_str = "N/A"
-        change = None
+st.line_chart(df.set_index("timestamp")[["close", "RSI"]])
 
-    rows.append({
-        "Crypto": coin['symbol'].upper(),
-        "Name": coin['name'],
-        "Price (1d %)": pct_str,
-        "GPT Signal": calculate_signal(change),
-        "RSI 1h": safe_random(),
-        "RSI 1d": safe_random(),
-        "RSI 1w": safe_random(),
-        "RSI 1mo": safe_random(),
-        "SRSI": simulate_indicator(),
-        "MACD": simulate_indicator(),
-        "MA": simulate_indicator(),
-        "Doda Stoch": simulate_indicator(),
-        "GChannel": simulate_indicator(),
-        "Volume Flow": simulate_indicator(),
-        "VWAP": simulate_indicator()
-    })
-
-df = pd.DataFrame(rows)
-
-def highlight_change(val):
-    if isinstance(val, str) and '%' in val:
-        try:
-            num = float(val.split('(')[-1].replace('%','').replace(')',''))
-            if num > 0:
-                return 'color: green'
-            elif num < 0:
-                return 'color: red'
-        except:
-            return ''
-    return ''
-
-st.dataframe(df.style.applymap(highlight_change, subset=['Price (1d %)']), use_container_width=True)
-
-# Legenda
-st.markdown("### ℹ️ Legenda e Indicatori Tecnici")
-
+st.markdown("### ℹ️ Indicatori")
 st.markdown("""
-**GPT Signal**: Sintesi automatica della forza del movimento giornaliero.
-- 🔶 Strong Buy: trend molto positivo
-- 🟢 Buy: crescita moderata
-- 🟡 Hold: situazione stabile
-- 🔴 Sell: calo moderato
-- 🔻 Strong Sell: calo importante
-
-**Indicatori Tecnici**:
-- **RSI (1h, 1d, 1w, 1mo)**: indice di forza relativa (0–100), sopra 70 = ipercomprato, sotto 30 = ipervenduto.
-- **SRSI**: RSI stocastico, misura la velocità del RSI.
-- **MACD**: confronto tra 2 medie mobili esponenziali per segnalare cambi trend.
-- **MA**: media mobile semplice, utile per capire la tendenza generale.
-- **Doda Stoch**: derivato dello stocastico, utile per segnali di entrata/uscita (versione semplificata).
-- **GChannel**: simile a Donchian o Gann, mostra bande di prezzo.
-- **Volume Flow**: combina volume e prezzo per rilevare flussi di capitale.
-- **VWAP**: prezzo medio ponderato per il volume, importante per trader istituzionali.
+- **RSI (Relative Strength Index)**: misura la forza di un trend su scala 0–100.  
+  Valori sopra 70 = ipercomprato, sotto 30 = ipervenduto.
+- Dati aggiornati da [Binance Public API](https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data)
 """)
-
-st.markdown("⚠️ Valori simulati per indicatori: sarà possibile collegare librerie reali come `ta` sul server Hetzner.")
