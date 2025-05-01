@@ -9,7 +9,6 @@ import math
 import yfinance as yf
 
 # --- Configurazione Globale ---
-# (Mappa SYMBOL_TO_ID_MAP e liste derivate invariate)
 SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin",
     "SOL": "solana", "XRP": "ripple", "RNDR": "render-token",
@@ -23,9 +22,9 @@ SYMBOL_TO_ID_MAP = {
 SYMBOLS = list(SYMBOL_TO_ID_MAP.keys())
 COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
 NUM_COINS = len(SYMBOLS)
-TRAD_TICKERS = ['^GSPC', '^IXIC', 'GC=F', 'UVXY', 'TQQQ', # Indici/VIX/Oro
-                'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR'] # Azioni
-VS_CURRENCY = "usd"; CACHE_TTL = 1800 # 30 min refresh
+TRAD_TICKERS = ['^GSPC', '^IXIC', 'GC=F', 'UVXY', 'TQQQ',
+                'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR']
+VS_CURRENCY = "usd"; CACHE_TTL = 1800
 DAYS_HISTORY_DAILY = 365; DAYS_HISTORY_HOURLY = 7
 RSI_PERIOD = 14; SRSI_PERIOD = 14; SRSI_K = 3; SRSI_D = 3
 MACD_FAST = 12; MACD_SLOW = 26; MACD_SIGNAL = 9
@@ -53,7 +52,6 @@ def format_large_number(num):
     else: return f"{num / 1_000_000_000_000:.2f}T"
 
 # --- Funzioni API CoinGecko ---
-# ... (get_coingecko_market_data, get_coingecko_historical_data invariate) ...
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Caricamento dati di mercato (CoinGecko)...")
 def get_coingecko_market_data(ids_list, currency):
     ids_string = ",".join(ids_list)
@@ -104,8 +102,9 @@ def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
         else: return pd.DataFrame(), f"HTTP Error {http_err.response.status_code}"
     except Exception as e: return pd.DataFrame(), f"Generic Error: {type(e).__name__}"
 
-# --- Funzioni Dati Mercato Generale (Invariate) ---
-# ... (get_fear_greed_index_cmc, get_global_market_data_cg, get_etf_flow, get_traditional_market_data_yf) ...
+
+# --- Funzioni Dati Mercato Generale ---
+# ... (get_fear_greed_index_cmc, get_global_market_data_cg, get_etf_flow, get_traditional_market_data_yf invariate) ...
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def get_fear_greed_index_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/crypto/fear-and-greed"
@@ -146,8 +145,8 @@ def get_traditional_market_data_yf(tickers):
         except Exception: data[ticker_sym] = np.nan
     return data
 
-# --- Funzioni Calcolo Indicatori (Manuali - Invariate) ---
-# ... (calculate_rsi_manual, calculate_stoch_rsi, calculate_macd_manual, calculate_sma_manual, calculate_vwap_manual) ...
+# --- Funzioni Calcolo Indicatori (Manuali) ---
+# ... (calculate_rsi_manual, calculate_stoch_rsi, calculate_macd_manual, calculate_sma_manual, calculate_vwap_manual invariate) ...
 def calculate_rsi_manual(series, period=RSI_PERIOD):
     if not isinstance(series, pd.Series) or series.isna().all(): return np.nan
     series = series.dropna(); len_series = len(series)
@@ -213,7 +212,6 @@ def calculate_vwap_manual(df, period=VWAP_PERIOD):
     vwap = (df_period['close'] * df_period['volume']).sum() / df_period['volume'].sum()
     return vwap
 
-
 # --- Funzione Raggruppata Indicatori (Invariata) ---
 def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df, fetch_errors_list):
     # ... (codice invariato) ...
@@ -251,50 +249,62 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df, fetch_errors_l
         else: fetch_errors_list.append(f"Dati Hourly insuff. ({len_hourly}/{min_len_rsi_base} ore) per RSI 1h per {symbol}.")
     return indicators
 
-# --- Funzioni Segnale ---
+# --- Funzioni Segnale (generate_gpt_signal con SINTASSI CORRETTA) ---
 def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, current_price):
-    # ... (logica interna invariata) ...
+    """Genera un segnale più articolato (ma ancora basato su regole)."""
     required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, current_price]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/D"
     score = 0
-    if current_price > ma_long: score += 1; else: score -= 1
-    if ma_short > ma_long: score += 2; else: score -= 2
-    if macd_hist > 0: score += 2; else: score -= 2
-    if rsi_1d < 30: score += 2; elif rsi_1d < 40: score += 1; elif rsi_1d > 70: score -= 2; elif rsi_1d > 60: score -= 1
+    # 1. Trend di fondo (MA Long vs Prezzo) - Corretto
+    if current_price > ma_long:
+        score += 1
+    else:
+        score -= 1
+    # 2. Trend Medio Termine (MA Crossover) - Corretto
+    if ma_short > ma_long:
+        score += 2
+    else:
+        score -= 2
+    # 3. Momentum (MACD Histogram) - Corretto
+    if macd_hist > 0:
+        score += 2
+    else:
+        score -= 2
+    # 4. Ipercomprato/venduto Daily (RSI 1d)
+    if rsi_1d < 30: score += 2
+    elif rsi_1d < 40: score += 1
+    elif rsi_1d > 70: score -= 2
+    elif rsi_1d > 60: score -= 1
+    # 5. Ipercomprato/venduto Weekly (RSI 1w)
     if not pd.isna(rsi_1w):
-        if rsi_1w < 30: score += 1; elif rsi_1w > 70: score -= 1
+        if rsi_1w < 30: score += 1
+        elif rsi_1w > 70: score -= 1
+    # 6. Forza a Breve (RSI 1h)
     if not pd.isna(rsi_1h):
-        if rsi_1h > 60: score += 1; elif rsi_1h < 40: score -= 1
+        if rsi_1h > 60: score += 1
+        elif rsi_1h < 40: score -= 1
+    # 7. SRSI (StochRSI Daily)
     if not pd.isna(srsi_k) and not pd.isna(srsi_d):
-        if srsi_k < 20 and srsi_d < 20: score += 1; elif srsi_k > 80 and srsi_d > 80: score -= 1
-    if score >= 5: return "⚡️ Strong Buy"; elif score >= 2: return "🟢 Buy"; elif score <= -5: return "🚨 Strong Sell"; elif score <= -2: return "🔴 Sell"
+        if srsi_k < 20 and srsi_d < 20: score += 1
+        elif srsi_k > 80 and srsi_d > 80: score -= 1
+    # Mappatura Score
+    if score >= 5: return "⚡️ Strong Buy"
+    elif score >= 2: return "🟢 Buy"
+    elif score <= -5: return "🚨 Strong Sell"
+    elif score <= -2: return "🔴 Sell"
     elif score >= 0: return "⏳ CTB" if not pd.isna(rsi_1d) and rsi_1d < 45 and rsi_1d > 30 else "🟡 Hold"
     else: return "⚠️ CTS" if not pd.isna(rsi_1d) and rsi_1d > 55 and rsi_1d < 70 else "🟡 Hold"
 
-# --- Funzione Gemini Alert (MODIFICATA per output stile GPT) ---
+# --- Funzione Gemini Alert (Logica Invariata, Output già modificato) ---
 def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d):
     """Genera un alert specifico basato su forte confluenza DAILY (restituisce stringhe stile GPT)."""
     if pd.isna(ma_short) or pd.isna(ma_long) or pd.isna(macd_hist) or pd.isna(rsi_1d):
-        return "⚪️ N/D" # Usa N/D invece di clessidra
-
-    is_uptrend = ma_short > ma_long
-    is_momentum_positive = macd_hist > 0
-    is_not_overbought = rsi_1d < 70 # Condizione per BUY
-
-    is_downtrend = ma_short < ma_long
-    is_momentum_negative = macd_hist < 0
-    is_not_oversold = rsi_1d > 30 # Condizione per SELL
-
-    # Determina se è BUY o SELL (logica originale, ma restituisce nuovo testo)
-    # Consideriamo questa confluenza come un segnale "forte"
-    if is_uptrend and is_momentum_positive and is_not_overbought:
-        return "⚡️ Strong Buy" # Output modificato
-    elif is_downtrend and is_momentum_negative and is_not_oversold:
-        return "🚨 Strong Sell" # Output modificato
-    else:
-        # Se non c'è segnale forte, ritorna Hold (o potremmo aggiungere logica per Buy/Sell normali?)
-        # Per ora, manteniamo la logica originale: o segnale forte o niente (Hold)
-        return "🟡 Hold" # Output modificato per stato neutro
+        return "⚪️ N/D"
+    is_uptrend = ma_short > ma_long; is_momentum_positive = macd_hist > 0; is_not_overbought = rsi_1d < 70
+    if is_uptrend and is_momentum_positive and is_not_overbought: return "⚡️ Strong Buy" # Output modificato
+    is_downtrend = ma_short < ma_long; is_momentum_negative = macd_hist < 0; is_not_oversold = rsi_1d > 30
+    if is_downtrend and is_momentum_negative and is_not_oversold: return "🚨 Strong Sell" # Output modificato
+    return "🟡 Hold" # Output modificato
 
 # --- Configurazione Pagina Streamlit ---
 st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", page_icon="📈")
@@ -303,7 +313,7 @@ st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", p
 col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
 with col_title: st.title("📈 Crypto Technical Dashboard Pro")
 with col_button:
-    st.write("");
+    st.write(""); # Spazio per allineare
     if st.button("🔄 Aggiorna", help=f"Forza l'aggiornamento dei dati (cache: {CACHE_TTL/60:.0f} min)"):
         st.cache_data.clear(); st.rerun()
 
@@ -312,7 +322,7 @@ last_cg_update_placeholder = st.empty()
 st.caption(f"Dati CoinGecko (cache {CACHE_TTL/60:.0f}m live / {CACHE_TTL*2/60:.0f}m storico). Dati Mercato Trad. (cache {CACHE_TTL/60:.0f}m).")
 
 # --- Sezione Market Overview ---
-# ... (Codice invariato rispetto alla versione precedente) ...
+# ... (Layout e logica invariati) ...
 st.markdown("---")
 st.subheader("🌐 Market Overview")
 fear_greed = get_fear_greed_index_cmc()
@@ -350,7 +360,6 @@ progress_bar = st.progress(0, text=f"Analisi {NUM_COINS} Criptovalute...")
 coin_ids_ordered = market_data_df.index.tolist()
 
 for i, coin_id in enumerate(coin_ids_ordered):
-    # ... (fetch live data come prima, inclusi % 30d, 1y) ...
     if coin_id not in market_data_df.index: continue
     live_data = market_data_df.loc[coin_id]
     symbol = live_data.get('symbol', coin_id).upper(); name = live_data.get('name', coin_id)
@@ -358,8 +367,8 @@ for i, coin_id in enumerate(coin_ids_ordered):
     change_1h = live_data.get('price_change_percentage_1h_in_currency', np.nan)
     change_24h = live_data.get('price_change_percentage_24h_in_currency', np.nan)
     change_7d = live_data.get('price_change_percentage_7d_in_currency', np.nan)
-    change_30d = live_data.get('price_change_percentage_30d_in_currency', np.nan) # Nuovo
-    change_1y = live_data.get('price_change_percentage_1y_in_currency', np.nan)   # Nuovo
+    change_30d = live_data.get('price_change_percentage_30d_in_currency', np.nan)
+    change_1y = live_data.get('price_change_percentage_1y_in_currency', np.nan)
     volume_24h = live_data.get('total_volume', np.nan)
 
     hist_daily_df, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
@@ -372,7 +381,6 @@ for i, coin_id in enumerate(coin_ids_ordered):
     gpt_signal = generate_gpt_signal( indicators.get("RSI (1d)"), indicators.get("RSI (1h)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), current_price)
     gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"))
 
-    # Assembla risultati riga
     results.append({
         "Rank": rank, "Symbol": symbol, "Name": name, "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal,
         f"Prezzo ({VS_CURRENCY.upper()})": current_price,
@@ -423,13 +431,11 @@ if results:
              elif "MACD" in col: formatter = lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
              elif "MA" in col or "VWAP" in col: formatter = lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A"
              else: formatter = lambda x: str(x) if pd.notna(x) else "N/A"
-             # Applica formatter solo se la colonna esiste effettivamente
-             if col in df_display:
-                  df_display[col] = df_display[col].apply(lambda x: formatter(x) if pd.notna(x) else "N/A")
+             if col in df_display: df_display[col] = df_display[col].apply(lambda x: formatter(x) if pd.notna(x) else "N/A")
     df_display.fillna("N/A", inplace=True)
 
-    # Stili (highlight_gemini_alert Rimosso, usa highlight_gpt_signal per entrambi)
-    def highlight_pct_col(col): #... (invariato)
+    # Stili (highlight_gemini_alert RIMOSSO, usa highlight_gpt_signal)
+    def highlight_pct_col(col):#...
         colors = [''] * len(col);
         for i, val in enumerate(col):
             if isinstance(val, str) and val.endswith('%') and val != 'N/A':
@@ -440,14 +446,14 @@ if results:
         colors = [''] * len(col);
         for i, val in enumerate(col):
             if isinstance(val, str):
-                 if "Strong Buy" in val: colors[i] = 'color: #198754; font-weight: bold;' # Verde scuro grassetto
-                 elif "Buy" in val and "Strong" not in val: colors[i] = 'color: #198754;' # Verde normale
-                 elif "Strong Sell" in val: colors[i] = 'color: #dc3545; font-weight: bold;' # Rosso grassetto
-                 elif "Sell" in val and "Strong" not in val: colors[i] = 'color: #dc3545;' # Rosso normale
-                 elif "CTB" in val: colors[i] = 'color: #20c997;' # Verde acqua
-                 elif "CTS" in val: colors[i] = 'color: #fd7e14;' # Arancione
-                 elif "Hold" in val: colors[i] = 'color: #6c757d;' # Grigio
-                 elif "N/D" in val: colors[i] = 'color: #adb5bd;' # Grigio chiaro
+                 if "Strong Buy" in val: colors[i] = 'color: #198754; font-weight: bold;'
+                 elif "Buy" in val and "Strong" not in val: colors[i] = 'color: #198754;'
+                 elif "Strong Sell" in val: colors[i] = 'color: #dc3545; font-weight: bold;'
+                 elif "Sell" in val and "Strong" not in val: colors[i] = 'color: #dc3545;'
+                 elif "CTB" in val: colors[i] = 'color: #20c997;'
+                 elif "CTS" in val: colors[i] = 'color: #fd7e14;'
+                 elif "Hold" in val: colors[i] = 'color: #6c757d;'
+                 elif "N/D" in val: colors[i] = 'color: #adb5bd;'
         return colors
 
     styled_df = df_display.style
