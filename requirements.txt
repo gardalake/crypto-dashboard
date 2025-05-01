@@ -1,3 +1,5 @@
 streamlit
 pandas
 requests
+yfinance
+# setuptools # Rimosso - non sembrava più necessario dopo aver tolto pandas-ta
