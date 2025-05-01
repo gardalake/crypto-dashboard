@@ -283,12 +283,17 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df, fetch_errors_l
         else: fetch_errors_list.append(f"Dati Hourly insuff. ({len_hourly}/{min_len_rsi_base} ore) per RSI 1h per {symbol}.")
     return indicators
 
-# --- Funzioni Segnale (Invariate) ---
+# --- Funzioni Segnale (Corretta) ---
 def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, current_price):
     required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, current_price]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/D"
     score = 0
-    if current_price > ma_long: score += 1; else: score -= 1
+    # --- LINE 291 FIX START ---
+    if current_price > ma_long:
+        score += 1
+    else:
+        score -= 1
+    # --- LINE 291 FIX END ---
     if ma_short > ma_long: score += 2; else: score -= 2
     if macd_hist > 0: score += 2; else: score -= 2
     if rsi_1d < 30: score += 2; elif rsi_1d < 40: score += 1; elif rsi_1d > 70: score -= 2; elif rsi_1d > 60: score -= 1
@@ -359,7 +364,7 @@ st.markdown("---")
 
 # --- Logica Principale Dashboard Crypto ---
 market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
-last_cg_update_rome = last_cg_update_utc + timedelta(hours=2)
+last_cg_update_rome = last_cg_update_utc + timedelta(hours=2) # Assuming Rome is UTC+2
 last_cg_update_placeholder.markdown(f"*Prezzi Live aggiornati alle: **{last_cg_update_rome.strftime('%Y-%m-%d %H:%M:%S')} (Ora di Roma)***")
 
 if market_data_df.empty: st.error("Errore caricamento dati crypto CoinGecko."); st.stop()
@@ -523,15 +528,15 @@ with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False):
     **Tabella Crypto:**
     * **Variazioni Percentuali (%):** Rispetto a 1h, 24h, 7d, 30d, 1y. *(% 4h/15m non disp.)*
     * **Indicatori Momentum:**
-        * **RSI (1h, 1d, 1w, 1mo):** Velocità prezzo (0-100). `>70` Overbought, `<30` Oversold. *(Dati H/W/M dipendono da API).*
-        * **SRSI %K / %D (1d):** Stocastico RSI. `>80` Overbought, `<20` Oversold. Cicli brevi.
-        * **MACD Hist (1d):** Momentum trend. `>0` Buy, `<0` Sell.
+          * **RSI (1h, 1d, 1w, 1mo):** Velocità prezzo (0-100). `>70` Overbought, `<30` Oversold. *(Dati H/W/M dipendono da API).*
+          * **SRSI %K / %D (1d):** Stocastico RSI. `>80` Overbought, `<20` Oversold. Cicli brevi.
+          * **MACD Hist (1d):** Momentum trend. `>0` Buy, `<0` Sell.
     * **Indicatori Trend:**
-        * **MA (SMA - 20d, 50d):** Medie mobili semplici. Trend e S/R. "Golden/Death Cross".
-        * **VWAP (1d):** Prezzo medio ponderato volume. *(Calc. approx).*
+          * **MA (SMA - 20d, 50d):** Medie mobili semplici. Trend e S/R. "Golden/Death Cross".
+          * **VWAP (1d):** Prezzo medio ponderato volume. *(Calc. approx).*
     * **Segnali Combinati (Esemplificativi - NON CONSULENZA FINANZIARIA):**
-        * **Gemini Alert:** Alert specifico confluenza DAILY: `⚡️ Strong Buy` (MA20>MA50 & MACD>0 & RSI<70). `🚨 Strong Sell` (MA20<MA50 & MACD<0 & RSI>30). `🟡 Hold` Neutro. `⚪️ N/D` Dati insuff.
-        * **GPT Signal:** Sintesi generale pesata (MAs, MACD, RSIs, SRSI). Include `⏳ CTB` (Close to Buy), `⚠️ CTS` (Close to Sell). **Cautela.**
+          * **Gemini Alert:** Alert specifico confluenza DAILY: `⚡️ Strong Buy` (MA20>MA50 & MACD>0 & RSI<70). `🚨 Strong Sell` (MA20<MA50 & MACD<0 & RSI>30). `🟡 Hold` Neutro. `⚪️ N/D` Dati insuff.
+          * **GPT Signal:** Sintesi generale pesata (MAs, MACD, RSIs, SRSI). Include `⏳ CTB` (Close to Buy), `⚠️ CTS` (Close to Sell). **Cautela.**
     * **Generale:** **N/A:** Dato non disponibile/calcolabile.
     """)
 
