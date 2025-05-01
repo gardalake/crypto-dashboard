@@ -17,6 +17,29 @@ except ImportError:
     st.warning("Modulo 'zoneinfo' non trovato. Usando fallback UTC+2 per Roma. Considera aggiornamento Python o aggiunta 'tzdata' a requirements.txt")
     ZoneInfo = None # Define as None to handle conditional logic later
 
+# --- Layout App Streamlit ---
+# Set page config first
+st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", page_icon="📈")
+
+# --- INIZIO: Codice CSS per ridurre font st.metric ---
+# Inject custom CSS with st.markdown to adjust metric value font size
+st.markdown("""
+<style>
+/* Seleziona l'elemento che contiene il valore principale di st.metric */
+div[data-testid="stMetricValue"] {
+    font-size: 14px !important; /* Imposta dimensione font a 14px come richiesto */
+}
+/* Opzionale: Se vuoi rimpicciolire anche l'etichetta sopra il valore */
+/*
+div[data-testid="stMetricLabel"] > label {
+    font-size: 12px !important; /* Esempio: Rimuovi /* e */ per attivare */
+}
+*/
+</style>
+""", unsafe_allow_html=True)
+# --- FINE: Codice CSS ---
+
+
 # --- Configurazione Globale ---
 
 # Mappa Simbolo -> ID CoinGecko per facile gestione
@@ -93,6 +116,7 @@ def check_password():
 if not check_password():
     st.stop() # Stop if password check fails
 
+
 # --- Funzione Helper Formattazione Numeri Grandi ---
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
@@ -116,34 +140,34 @@ def get_coingecko_market_data(ids_list, currency):
         'price_change_percentage': '1h,24h,7d,30d,1y', # Request needed percentages
         'precision': 'full' # Request full precision for prices
     }
-    timestamp = datetime.now(ZoneInfo("UTC") if ZoneInfo else None) # Record timestamp in UTC
+    timestamp_utc = datetime.now(ZoneInfo("UTC") if ZoneInfo else None) # Record timestamp in UTC
     try:
         response = requests.get(url, params=params, timeout=20) # Increased timeout slightly
         response.raise_for_status() # Raises HTTPError for bad responses (4XX, 5XX)
         data = response.json()
         if not data: # Handle empty response list
              st.warning("API CoinGecko ha restituito dati vuoti per il mercato live.")
-             return pd.DataFrame(), timestamp
+             return pd.DataFrame(), timestamp_utc # Return UTC timestamp even on error
         df = pd.DataFrame(data)
         if not df.empty:
              # Set index AFTER ensuring df is not empty
              df.set_index('id', inplace=True)
-        return df, timestamp
+        return df, timestamp_utc # Return successful data and UTC timestamp
     except requests.exceptions.HTTPError as http_err:
         # Specific handling for 429 Rate Limit error
         if http_err.response.status_code == 429:
              st.error("Errore API CoinGecko: Limite richieste (429) raggiunto. Attendi qualche minuto prima di aggiornare.")
         else:
              st.error(f"Errore HTTP API Mercato CoinGecko (Status: {http_err.response.status_code}): {http_err}")
-        return pd.DataFrame(), timestamp # Return empty DataFrame on error
+        return pd.DataFrame(), timestamp_utc # Return empty DataFrame on error, but still return timestamp
     except requests.exceptions.RequestException as req_ex:
         # Handle other request errors (timeout, connection issues)
         st.error(f"Errore Richiesta API Mercato CoinGecko: {req_ex}")
-        return pd.DataFrame(), timestamp
+        return pd.DataFrame(), timestamp_utc
     except Exception as e:
         # Handle unexpected errors during processing
         st.error(f"Errore Processamento Dati Mercato CoinGecko: {e}")
-        return pd.DataFrame(), timestamp
+        return pd.DataFrame(), timestamp_utc
 
 @st.cache_data(ttl=CACHE_TTL * 2, show_spinner=False) # Longer cache for historical
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
@@ -259,6 +283,7 @@ def get_global_market_data_cg(currency):
         # btc_dominance = data.get('market_cap_percentage', {}).get('btc', np.nan)
         return total_mcap #, btc_dominance
     except requests.exceptions.RequestException as req_ex:
+        # Log specific error for global data failure
         st.warning(f"Errore API Global CoinGecko: {req_ex}")
         return np.nan #, np.nan
     except Exception as e:
@@ -271,26 +296,47 @@ def get_etf_flow(): return "N/A"
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Caricamento dati mercato tradizionale (Yahoo Finance)...")
 def get_traditional_market_data_yf(tickers):
     data = {}
+    warning_shown = False # Flag to show warning only once
     # Download data more efficiently using yfinance's bulk download
     try:
-        yf_data = yf.download(tickers, period='5d', interval='1d', progress=False)
+        # Use yf.download which is generally preferred for multiple tickers
+        yf_data = yf.download(
+            tickers=tickers,
+            period='5d',       # Get a few days to ensure latest close is available
+            interval='1d',
+            progress=False,    # Disable progress bar in logs
+            ignore_tz=True     # Often simplifies things if timezone isn't critical for just the price
+        )
+
         if yf_data.empty:
             st.warning("yfinance non ha restituito dati per i ticker tradizionali.")
+            warning_shown = True
             return {ticker: np.nan for ticker in tickers}
 
         # Get the last closing price for each ticker
-        last_close = yf_data['Close'].iloc[-1]
+        # Check if 'Close' column exists and handle multi-level columns if necessary
+        close_col = 'Close' if 'Close' in yf_data.columns else ('Close',) # Handle potential multi-index
+        if close_col not in yf_data.columns :
+             st.warning("Colonna 'Close' non trovata nei dati yfinance.")
+             return {ticker: np.nan for ticker in tickers}
+
+        last_close = yf_data[close_col].iloc[-1]
+        # Convert Series to dictionary
         data = last_close.to_dict()
 
-        # Fill any missing tickers with NaN (if download failed for some)
+        # Fill any missing tickers with NaN (if download failed for some symbols within the list)
         for ticker in tickers:
-            if ticker not in data:
-                data[ticker] = np.nan
-                st.warning(f"Dati non trovati per il ticker tradizionale: {ticker}")
+            if ticker not in data or pd.isna(data[ticker]):
+                data[ticker] = np.nan # Ensure missing ones are NaN
+                if not warning_shown:
+                     # Show warning only once if any ticker failed
+                     st.warning(f"Dati non trovati per alcuni ticker tradizionali (es. {ticker}). Potrebbe essere un problema temporaneo.")
+                     warning_shown = True
+
 
     except Exception as e:
         st.error(f"Errore durante il recupero dati da yfinance: {e}")
-        # Fallback: return NaN for all tickers on error
+        # Fallback: return NaN for all tickers on major error
         data = {ticker: np.nan for ticker in tickers}
 
     return data
@@ -301,18 +347,20 @@ def get_traditional_market_data_yf(tickers):
 def get_crypto_news(feed_url, num_items=NUM_NEWS_ITEMS):
     """Recupera e parsifica un feed RSS."""
     try:
-        # Use a timeout for the feed parsing request
-        feed = feedparser.parse(feed_url, request_headers={'User-Agent': 'Mozilla/5.0'}) # Add user agent
+        # Use a timeout for the feed parsing request & add user agent
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+        feed = feedparser.parse(feed_url, request_headers=headers, timeout=15) # Added timeout
+
         # Check for errors during parsing more robustly
         if feed.bozo:
-            # Log warning but proceed if possible, check exception type
             exc = feed.get('bozo_exception', Exception('Unknown feedparser error'))
             st.warning(f"Possibile errore/warning nel parsing del feed RSS ({feed_url}): {exc}")
         # Check if entries exist before slicing
         if not feed.entries:
              st.info(f"Nessuna notizia trovata nel feed RSS: {feed_url}")
              return []
-        return feed.entries[:num_items] # Ritorna le prime N notizie
+        # Return the first N items found
+        return feed.entries[:num_items]
     except Exception as e:
         # Catch broader exceptions during the request/parsing
         st.error(f"Errore grave durante il recupero/parsing del feed RSS ({feed_url}): {e}")
@@ -320,6 +368,7 @@ def get_crypto_news(feed_url, num_items=NUM_NEWS_ITEMS):
 
 
 # --- Funzioni Calcolo Indicatori (Manuali con validazione input) ---
+# [Functions calculate_rsi_manual, calculate_stoch_rsi, calculate_macd_manual, calculate_sma_manual, calculate_vwap_manual remain unchanged from previous version]
 def calculate_rsi_manual(series, period=RSI_PERIOD):
     # Validate input
     if not isinstance(series, pd.Series) or series.empty or series.isna().all():
@@ -390,7 +439,8 @@ def calculate_stoch_rsi(series, rsi_period=RSI_PERIOD, stoch_period=SRSI_PERIOD,
     stoch_rsi_k = stoch_rsi_k_raw.rolling(window=k_smooth).mean()
     if len(stoch_rsi_k.dropna()) < d_smooth :
          # Return last K if D cannot be calculated
-         return stoch_rsi_k.iloc[-1] if not pd.isna(stoch_rsi_k.iloc[-1]) else np.nan, np.nan
+         last_k_val = stoch_rsi_k.iloc[-1]
+         return max(0.0, min(100.0, last_k_val)) if pd.notna(last_k_val) else np.nan, np.nan
 
     stoch_rsi_d = stoch_rsi_k.rolling(window=d_smooth).mean()
 
@@ -477,63 +527,63 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df, fetch_errors_l
         f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan,
         "VWAP (1d)": np.nan,
         # Placeholders for future/other indicators
-        "Doda Stoch": "N/A", "GChannel": "N/A", "Volume Flow": "N/A"
+        # "Doda Stoch": "N/A", "GChannel": "N/A", "Volume Flow": "N/A"
     }
     # Define minimum data lengths required for reliable calculations
-    # These can be fine-tuned based on indicator requirements
-    min_len_daily_full = max(MACD_SLOW + MACD_SIGNAL, MA_LONG) + 5 # Add buffer
     min_len_rsi_base = RSI_PERIOD + 1
     min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + 5 # Add buffer
     min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5 # Add buffer
+    min_len_vwap_base = VWAP_PERIOD + 1
+    # Determine overall minimum length needed for daily calculations
+    min_len_daily_req = max(min_len_rsi_base, min_len_srsi_base, min_len_macd_base, MA_LONG + 1, min_len_vwap_base)
+
 
     # --- Daily Indicators ---
+    # Check if daily data is usable
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
         close_daily = hist_daily_df['close'].dropna()
         len_daily = len(close_daily)
 
-        # Check overall length for comprehensive calculations
-        if len_daily >= min_len_daily_full:
-            indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
-            indicators["SRSI %K (1d)"], indicators["SRSI %D (1d)"] = calculate_stoch_rsi(close_daily, RSI_PERIOD, SRSI_PERIOD, SRSI_K, SRSI_D)
-            macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-            indicators["MACD Line (1d)"] = macd_l
-            indicators["MACD Signal (1d)"] = macd_s
-            indicators["MACD Hist (1d)"] = macd_h
-            indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
-            indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
-            indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df, VWAP_PERIOD) # VWAP needs full df
-        else:
-            # If not enough data for all, try calculating individually if possible
-            fetch_errors_list.append(f"{symbol}: Dati Daily insuff. ({len_daily}/{min_len_daily_full}) per tutti gli ind.")
-            if len_daily >= min_len_rsi_base: indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
-            if len_daily >= min_len_srsi_base: indicators["SRSI %K (1d)"], indicators["SRSI %D (1d)"] = calculate_stoch_rsi(close_daily, RSI_PERIOD, SRSI_PERIOD, SRSI_K, SRSI_D)
-            if len_daily >= min_len_macd_base:
-                 macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-                 indicators["MACD Line (1d)"] = macd_l; indicators["MACD Signal (1d)"] = macd_s; indicators["MACD Hist (1d)"] = macd_h
-            if len_daily >= MA_SHORT: indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
-            if len_daily >= MA_LONG: indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
-            if len_daily >= VWAP_PERIOD: indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df, VWAP_PERIOD)
+        # Calculate indicators only if sufficient data exists
+        if len_daily >= min_len_rsi_base: indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{min_len_rsi_base}) per RSI(1d)")
+
+        if len_daily >= min_len_srsi_base: indicators["SRSI %K (1d)"], indicators["SRSI %D (1d)"] = calculate_stoch_rsi(close_daily, RSI_PERIOD, SRSI_PERIOD, SRSI_K, SRSI_D)
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{min_len_srsi_base}) per SRSI(1d)")
+
+        if len_daily >= min_len_macd_base:
+             macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+             indicators["MACD Line (1d)"] = macd_l; indicators["MACD Signal (1d)"] = macd_s; indicators["MACD Hist (1d)"] = macd_h
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{min_len_macd_base}) per MACD(1d)")
+
+        if len_daily >= MA_SHORT: indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{MA_SHORT}) per MA({MA_SHORT}d)")
+
+        if len_daily >= MA_LONG: indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{MA_LONG}) per MA({MA_LONG}d)")
+
+        if len_daily >= min_len_vwap_base: indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df, VWAP_PERIOD) # VWAP needs full df
+        else: fetch_errors_list.append(f"{symbol}: Dati insuff. ({len_daily}/{min_len_vwap_base}) per VWAP(1d)")
 
 
         # --- Weekly & Monthly RSI from Daily Data ---
+        # Calculate only if enough daily data exists and index is datetime
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
             try: # Weekly RSI
-                # Resample daily closes to weekly (Monday end), get last price of week
                 df_weekly = close_daily.resample('W-MON').last()
                 if len(df_weekly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
-                else: fetch_errors_list.append(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI 1w.")
-            except Exception as e: fetch_errors_list.append(f"{symbol}: Errore resampling/calcolo RSI weekly: {e}")
+                else: fetch_errors_list.append(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
+            except Exception as e: fetch_errors_list.append(f"{symbol}: Errore calcolo RSI weekly: {e}")
 
             try: # Monthly RSI
-                # Resample daily closes to monthly end, get last price of month
                 df_monthly = close_daily.resample('ME').last() # 'ME' for Month End
                 if len(df_monthly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
-                else: fetch_errors_list.append(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI 1mo.")
-            except Exception as e: fetch_errors_list.append(f"{symbol}: Errore resampling/calcolo RSI monthly: {e}")
-        elif len_daily <= min_len_rsi_base:
-             fetch_errors_list.append(f"{symbol}: Dati Daily insuff. per calcolare RSI Weekly/Monthly.")
+                else: fetch_errors_list.append(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
+            except Exception as e: fetch_errors_list.append(f"{symbol}: Errore calcolo RSI monthly: {e}")
+        # else: # Log if weekly/monthly cannot be calculated due to insufficient daily data length
+             # fetch_errors_list.append(f"{symbol}: Dati Daily insuff. per calcolare RSI Weekly/Monthly.")
 
     # --- Hourly RSI ---
     if not hist_hourly_df.empty and 'close' in hist_hourly_df.columns:
@@ -542,12 +592,13 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df, fetch_errors_l
         if len_hourly >= min_len_rsi_base:
             indicators["RSI (1h)"] = calculate_rsi_manual(close_hourly, RSI_PERIOD)
         else:
-            fetch_errors_list.append(f"{symbol}: Dati Hourly insuff. ({len_hourly}/{min_len_rsi_base}) per RSI 1h.")
+            fetch_errors_list.append(f"{symbol}: Dati Hourly insuff. ({len_hourly}/{min_len_rsi_base}) per RSI(1h)")
 
     return indicators
 
 
 # --- Funzioni Segnale (Sintassi Corretta e Logica Raffinata) ---
+# [Functions generate_gpt_signal and generate_gemini_alert remain unchanged from previous version]
 def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, current_price):
     """Generates a composite signal based on multiple indicators."""
     # Define required inputs for the core signal logic
@@ -605,13 +656,9 @@ def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, sr
     if pd.notna(srsi_k) and pd.notna(srsi_d): # Ensure both K and D are available
         # SRSI Oversold condition
         if srsi_k < 20 and srsi_d < 20:
-             # Optional: Check if K is crossing D upwards for stronger signal?
-             # if srsi_k > srsi_d: score += 1 # Example: add points if K crosses D up
              score += 1
         # SRSI Overbought condition
         elif srsi_k > 80 and srsi_d > 80:
-             # Optional: Check if K is crossing D downwards?
-             # if srsi_k < srsi_d: score -= 1
              score -= 1
 
     # Determine Signal based on Final Score Thresholds
@@ -621,10 +668,8 @@ def generate_gpt_signal(rsi_1d, rsi_1h, rsi_1w, macd_hist, ma_short, ma_long, sr
     elif score <= -2: return "🔴 Sell"
     # Nuanced Hold conditions based on score and RSI context
     elif score > 0: # Slightly Bullish Score (e.g., 0, 1)
-        # If score is weakly positive AND daily RSI is NOT overbought, lean towards CTB/Hold
         return "⏳ CTB" if pd.notna(rsi_1d) and rsi_1d < 55 else "🟡 Hold"
     else: # Slightly Bearish Score (e.g., -1)
-        # If score is weakly negative AND daily RSI is NOT oversold, lean towards CTS/Hold
         return "⚠️ CTS" if pd.notna(rsi_1d) and rsi_1d > 45 else "🟡 Hold"
 
 
@@ -637,38 +682,29 @@ def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d):
     # Define conditions clearly for readability
     is_uptrend_ma = ma_short > ma_long
     is_momentum_positive = macd_hist > 0
-    # Relaxed RSI condition for Buy: not extremely overbought
-    is_not_extremely_overbought = rsi_1d < 80
+    is_not_extremely_overbought = rsi_1d < 80 # Relaxed RSI condition
 
     is_downtrend_ma = ma_short < ma_long
     is_momentum_negative = macd_hist < 0
-    # Relaxed RSI condition for Sell: not extremely oversold
-    is_not_extremely_oversold = rsi_1d > 20
+    is_not_extremely_oversold = rsi_1d > 20 # Relaxed RSI condition
 
     # Combine conditions for alerts
-    # Strong Buy: Uptrend MA, Positive Momentum, Not extremely Overbought RSI
     if is_uptrend_ma and is_momentum_positive and is_not_extremely_overbought:
         return "⚡️ Strong Buy"
-    # Strong Sell: Downtrend MA, Negative Momentum, Not extremely Oversold RSI
     elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold:
         return "🚨 Strong Sell"
-    # Otherwise, default to Hold
     else:
         return "🟡 Hold"
 
 
-# --- Layout App Streamlit ---
-st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", page_icon="📈")
-
 # --- Titolo e Bottone Aggiorna ---
+# Title and Refresh button moved below password check and CSS injection
 col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
 with col_title: st.title("📈 Crypto Technical Dashboard Pro")
 with col_button:
     st.write("") # Spacer for alignment
     if st.button("🔄 Aggiorna", help=f"Forza aggiornamento dati (cache max {CACHE_TTL/60:.0f} min)", key="refresh_button"):
-        # Clear specific caches if needed, or all data caches
         st.cache_data.clear()
-        # Clear query params to allow potential rerun after password re-entry if needed
         st.query_params.clear()
         st.rerun()
 
@@ -684,7 +720,6 @@ st.subheader("🌐 Market Overview")
 # Fetch general market data
 fear_greed_value = get_fear_greed_index()
 total_market_cap = get_global_market_data_cg(VS_CURRENCY)
-# btc_dominance_value = get_global_market_data_cg(VS_CURRENCY)[1] # If dominance is returned
 etf_flow_value = get_etf_flow() # Placeholder
 traditional_market_data = get_traditional_market_data_yf(TRAD_TICKERS)
 
@@ -692,7 +727,6 @@ traditional_market_data = get_traditional_market_data_yf(TRAD_TICKERS)
 mkt_col1, mkt_col2, mkt_col3, mkt_col4, mkt_col5 = st.columns(5)
 with mkt_col1: st.metric(label="Fear & Greed Index", value=fear_greed_value, help="Fonte: Alternative.me (0=Paura Estrema, 100=Euforia Estrema)")
 with mkt_col2: st.metric(label=f"Total Crypto M.Cap ({VS_CURRENCY.upper()})", value=f"${format_large_number(total_market_cap)}", help="Fonte: CoinGecko Global")
-# with mkt_col_new: st.metric(label="BTC Dominance", value=f"{btc_dominance_value:.1f}%" if pd.notna(btc_dominance_value) else "N/A", help="Fonte: CoinGecko Global")
 with mkt_col3: st.metric(label="Crypto ETFs Flow (Daily)", value=etf_flow_value, help="Dato N/A - Fonte non disponibile gratuitamente.")
 with mkt_col4: st.metric(label="S&P 500 (^GSPC)", value=f"{traditional_market_data.get('^GSPC', np.nan):,.2f}" if pd.notna(traditional_market_data.get('^GSPC')) else "N/A")
 with mkt_col5: st.metric(label="Nasdaq (^IXIC)", value=f"{traditional_market_data.get('^IXIC', np.nan):,.2f}" if pd.notna(traditional_market_data.get('^IXIC')) else "N/A")
@@ -708,7 +742,7 @@ st.markdown("<h6>Titoli Principali (Prezzi):</h6>", unsafe_allow_html=True)
 stock_col1, stock_col2, stock_col3, stock_col4 = st.columns(4)
 # Ensure these tickers are in TRAD_TICKERS list
 stock_tickers_row = ['NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR']
-cols_stock = [stock_col1, stock_col2, stock_col3, stock_col4] * ( (len(stock_tickers_row) + 3) // 4 ) # Distribute tickers
+cols_stock = [stock_col1, stock_col2, stock_col3, stock_col4] # List of columns
 
 for idx, ticker in enumerate(stock_tickers_row):
     col_index = idx % 4
@@ -716,7 +750,8 @@ for idx, ticker in enumerate(stock_tickers_row):
     current_col = cols_stock[col_index]
     with current_col:
          price = traditional_market_data.get(ticker, np.nan)
-         st.metric(label=ticker, value=f"{price:,.2f}" if pd.notna(price) else "N/A") # Display price
+         # Display price using st.metric (will use the smaller font size set by CSS)
+         st.metric(label=ticker, value=f"{price:,.2f}" if pd.notna(price) else "N/A")
 
 st.markdown("---")
 
@@ -727,17 +762,18 @@ st.subheader(f"📊 Analisi Tecnica Crypto ({NUM_COINS} Asset)")
 market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
 
 # Display timestamp robustly using zoneinfo
+# Use the UTC timestamp returned from the function
 if last_cg_update_utc and ZoneInfo:
     try:
-        # Current location: San Donato Milanese -> Europe/Rome timezone
         local_tz = ZoneInfo("Europe/Rome")
+        # Ensure the UTC timestamp is timezone-aware before converting
+        if last_cg_update_utc.tzinfo is None:
+             last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
         last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
-        # Format timestamp including timezone name (e.g., CEST)
         last_update_placeholder.markdown(f"*Dati live aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
     except Exception as e:
         last_update_placeholder.markdown(f"*Errore conversione timestamp: {e}*")
-# Fallback if zoneinfo failed or timestamp missing
-elif last_cg_update_utc:
+elif last_cg_update_utc: # Fallback if zoneinfo failed or timestamp is naive
      last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=2) # Approximate CEST
      last_update_placeholder.markdown(f"*Dati live aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***")
 else:
@@ -745,13 +781,14 @@ else:
 
 
 # Check if market data fetch failed (e.g., due to 429 error)
+# This check now uses the custom error message from the function if 429 occurred
 if market_data_df.empty:
-    st.warning("Impossibile caricare i dati di mercato live. La tabella non può essere generata. Riprova più tardi.")
-    # Optionally display fetch errors collected so far
-    # if fetch_errors: ... (code below handles this)
+    # The error message from the function itself (like 429 warning) is already displayed
+    st.warning("Tabella Analisi Tecnica non generata causa errore caricamento dati live.")
     st.stop() # Stop execution if core data is missing
 
 # --- Processing Loop for Each Coin ---
+# [Processing loop remains unchanged from previous version]
 results = [] # List to store results for each coin
 fetch_errors = [] # List to collect errors during historical fetch/indicator calc
 
@@ -816,28 +853,18 @@ with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} cry
             f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),
             "VWAP (1d)": indicators.get("VWAP (1d)"),
             f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
-            # Ensure placeholder keys are present if needed for column consistency
-            # "Doda Stoch": indicators.get("Doda Stoch", "N/A"),
-            # "GChannel": indicators.get("GChannel", "N/A"),
-            # "Volume Flow": indicators.get("Volume Flow", "N/A"),
         })
-        # Update spinner text (optional, might slow down if too frequent)
-        # st.spinner(f"Processing {symbol} ({i+1}/{NUM_COINS})...")
-
 
 # --- Crea e Visualizza DataFrame ---
+# [DataFrame creation, styling, display remain unchanged from previous version]
 if results:
     # Create DataFrame from the list of dictionaries
     df = pd.DataFrame(results)
 
     # Set Rank as index (handle potential errors like non-unique ranks)
     try:
-        # Convert Rank to numeric if possible, coercing errors to NaN
         df['Rank'] = pd.to_numeric(df['Rank'], errors='coerce')
-        # Drop rows where Rank became NaN if necessary, or handle them
-        # df.dropna(subset=['Rank'], inplace=True)
         df.set_index('Rank', inplace=True, drop=True)
-        # Sort by Rank (numeric index)
         df.sort_index(inplace=True)
     except KeyError:
         st.warning("Colonna 'Rank' non trovata nei risultati.")
@@ -853,7 +880,6 @@ if results:
         "SRSI %K (1d)", "SRSI %D (1d)",
         "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)",
         f"Volume 24h ({VS_CURRENCY.upper()})"
-        # Add other placeholder columns if they exist and should be shown
     ]
     # Filter df to include only desired columns that actually exist
     cols_to_show = [col for col in cols_order if col in df.columns]
@@ -918,20 +944,23 @@ if results:
 else:
     st.warning("Nessun risultato crypto valido da visualizzare dopo l'elaborazione.")
 
+
 # --- Expander per errori/note di Fetch/Calcolo ---
 # Moved below main table display, shown only if errors occurred
 if fetch_errors:
-    with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=False):
-        # Show unique errors only for clarity
+    with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True): # Default to expanded if errors exist
         unique_errors = sorted(list(set(fetch_errors)))
-        # Limit number of errors displayed to avoid clutter
+        st.warning("Si sono verificati alcuni problemi durante il recupero dati o calcolo indicatori:")
         max_errors_to_show = 15
+        error_list_md = ""
         for i, error_msg in enumerate(unique_errors):
             if i < max_errors_to_show:
-                 st.info(error_msg)
+                 # Use markdown list for better readability
+                 error_list_md += f"- {error_msg}\n"
             elif i == max_errors_to_show:
-                 st.info(f"... e altri {len(unique_errors) - max_errors_to_show} errori.")
+                 error_list_md += f"- ... e altri {len(unique_errors) - max_errors_to_show} errori.\n"
                  break
+        st.markdown(error_list_md) # Display errors as a list
 
 
 # --- SEZIONE NEWS ---
@@ -965,30 +994,35 @@ else:
 
 # --- Legenda Aggiornata ---
 st.divider()
-with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False):
+with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False): # Keep collapsed by default unless user opens
     st.markdown("""
     *Disclaimer: Questa dashboard è solo a scopo informativo e non costituisce consulenza finanziaria.*
 
     **Market Overview:**
-    * **Fear & Greed Index:** Indice sentiment da Alternative.me (0=Paura Estrema, 100=Euforia Estrema).
-    * **Total Crypto M.Cap:** Capitalizzazione totale mercato crypto (Fonte: CoinGecko).
-    * **Crypto ETFs Flow:** Flusso netto giornaliero ETF crypto spot (Dato **N/A** - fonte non disp.).
-    * **S&P 500, Nasdaq, Gold, UVXY, TQQQ:** Prezzi indicativi mercato tradizionale (Fonte: Yahoo Finance).
-    * **Titoli Principali:** Prezzi indicativi azioni selezionate (Fonte: Yahoo Finance).
+    * **Fear & Greed Index:** Indice sentiment da Alternative.me (0=Paura Estrema, 100=Euforia Estrema). Misura il sentimento generale del mercato crypto.
+    * **Total Crypto M.Cap:** Capitalizzazione totale mercato crypto (Fonte: CoinGecko). Valore approssimativo dell'intero mercato.
+    * **Crypto ETFs Flow:** Flusso netto giornaliero ETF crypto spot (Dato **N/A**). Mostrerebbe l'interesse istituzionale tramite ETF.
+    * **S&P 500, Nasdaq, Gold, UVXY, TQQQ:** Prezzi indicativi dei principali mercati tradizionali per contesto (Fonte: Yahoo Finance).
+    * **Titoli Principali:** Prezzi indicativi di azioni selezionate rilevanti per tech/mercato (Fonte: Yahoo Finance).
 
     **Tabella Analisi Tecnica:**
-    * **Variazioni Percentuali (%):** Rispetto a 1h, 24h, 7d, 30d, 1y (Fonte: CoinGecko).
-    * **Indicatori Momentum:**
-        * **RSI (1h/1d/1w/1mo):** Relative Strength Index (0-100). `>70` Ipercomprato, `<30` Ipervenduto. 1w/1mo calcolati da dati daily.
-        * **SRSI %K / %D (1d):** Stochastic RSI (0-100). `>80` Ipercomprato, `<20` Ipervenduto. Segnali più frequenti dell'RSI.
-        * **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. `>0` Momentum rialzista, `<0` Momentum ribassista.
-    * **Indicatori Trend:**
-        * **MA (20d, 50d):** Simple Moving Average (Media Mobile Semplice). Incrocio MA20/MA50 può indicare cambio trend.
-        * **VWAP (1d):** Volume-Weighted Average Price (Prezzo Medio Ponderato per Volumi, ultimi 14gg).
-    * **Segnali Combinati (Esemplificativi - NON CONSULENZA):**
-        * **Gemini Alert:** Alert specifico DAILY: `⚡️ Strong Buy` (MA20>MA50 & MACD>0 & RSI<80). `🚨 Strong Sell` (MA20<MA50 & MACD<0 & RSI>20). `🟡 Hold` Altrimenti. `⚪️ N/D` Dati insuff.
-        * **GPT Signal:** Punteggio combinato (MAs, MACD, RSIs, SRSI). Interpretazione: `⚡️ Strong Buy` (Score >= 5), `🟢 Buy` (2-4), `⏳ CTB` (Close To Buy - Score > 0 & RSI<55), `🟡 Hold` (Neutro), `⚠️ CTS` (Close To Sell - Score < 0 & RSI>45), `🔴 Sell` (-4 to -2), `🚨 Strong Sell` (Score <= -5). `⚪️ N/D` Dati insuff. **Usare con cautela.**
-    * **Generale:** **N/A:** Dato non disponibile o errore.
+    * **Variazioni Percentuali (%):** Cambiamento di prezzo rispetto a 1 ora, 24 ore, 7 giorni, 30 giorni, 1 anno (Fonte: CoinGecko).
+    * **Indicatori Momentum (Misurano la velocità e la forza del movimento dei prezzi):**
+        * **RSI (1h/1d/1w/1mo):** Relative Strength Index (0-100). Indica se un asset è potenzialmente ipercomprato (`>70`) o ipervenduto (`<30`). Le versioni 1w/1mo sono calcolate dai dati giornalieri e danno una visione a più lungo termine.
+        * **SRSI %K / %D (1d):** Stochastic RSI (0-100). Versione più sensibile dell'RSI, utile per identificare cicli a breve termine. `>80` Ipercomprato, `<20` Ipervenduto. %K è la linea veloce, %D è la media mobile di %K.
+        * **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. Rappresenta la differenza tra la linea MACD (EMA veloce - EMA lenta) e la Signal Line (EMA della linea MACD). Barre sopra lo zero (`>0`) indicano momentum rialzista; barre sotto lo zero (`<0`) indicano momentum ribassista. L'altezza della barra indica la forza del momentum.
+    * **Indicatori Trend (Aiutano a identificare la direzione generale del mercato):**
+        * **MA (20d, 50d):** Simple Moving Average (Media Mobile Semplice) del prezzo di chiusura. Linee più lisce del prezzo, usate per identificare trend e potenziali livelli di supporto/resistenza. L'incrocio tra MA a breve (20d) e lungo termine (50d) può segnalare cambi di trend (es. Golden Cross: MA20 sopra MA50; Death Cross: MA20 sotto MA50).
+        * **VWAP (1d):** Volume-Weighted Average Price (Prezzo Medio Ponderato per Volumi). Calcolato sugli ultimi 14 giorni di dati giornalieri. Considerato da alcuni trader come un indicatore del valore "equo" basato sui volumi scambiati.
+    * **Segnali Combinati (Esemplificativi - NON CONSULENZA FINANZIARIA):**
+        * **Gemini Alert:** Logica semplice basata su confluenza di segnali **Daily**: `⚡️ Strong Buy` (MA20>MA50 & MACD Hist>0 & RSI<80). `🚨 Strong Sell` (MA20<MA50 & MACD Hist<0 & RSI>20). `🟡 Hold` altrimenti. Utile per una rapida valutazione della condizione attuale del trend giornaliero.
+        * **GPT Signal:** Logica più complessa che assegna un punteggio basato su molteplici indicatori (MAs, MACD, RSIs Daily/Weekly/Hourly, SRSI) per dare una valutazione generale. L'interpretazione è: `⚡️ Strong Buy` (Score >= 5), `🟢 Buy` (2-4), `⏳ CTB` (Close To Buy - Score > 0 & RSI<55), `🟡 Hold` (Neutro), `⚠️ CTS` (Close To Sell - Score < 0 & RSI>45), `🔴 Sell` (-4 to -2), `🚨 Strong Sell` (Score <= -5). **Da usare con estrema cautela**, è solo un esempio di combinazione.
+    * **Generale:**
+        * **N/A:** Dato non disponibile (es. da API), non applicabile, o errore nel calcolo (spesso per mancanza di dati storici sufficienti).
+
+    **Note:**
+    * I calcoli degli indicatori Weekly/Monthly dipendono dalla disponibilità e qualità dei dati Daily.
+    * Le performance passate non sono indicative di risultati futuri.
     """)
 
 # --- Footer ---
