@@ -1,3 +1,4 @@
+# Versione: v13 - Include logging UI, fix NameError, reintegro crypto, AV opz.'d', fix layout/colori, fix sintassi multipli, add WLD/HYPE, fix TRUMP ID.
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -52,7 +53,7 @@ SYMBOL_TO_ID_MAP = {
     "RNDR": "render-token", "FET": "fetch-ai", "RAY": "raydium", "SUI": "sui", "ONDO": "ondo-finance",
     "ARB": "arbitrum", "TAO": "bittensor", "LINK": "chainlink", "AVAX": "avalanche-2", "HBAR": "hedera-hashgraph",
     "PEPE": "pepe", "UNI": "uniswap", "TIA": "celestia", "JUP": "jupiter-aggregator", "IMX": "immutable-x",
-    "TRUMP": "maga", # ID 'maga' ha ticker TRUMP su CoinGecko. Verificare.
+    "TRUMP": "maga", # ID 'maga' ha ticker TRUMP su CoinGecko. Verificare se è la coin desiderata.
     "NEAR": "near", "AERO": "aerodrome-finance", "TRON": "tron", "AERGO": "aergo", "ADA": "cardano",
     "MKR": "maker", "WLD": "worldcoin-org", "HYPE": "hyperliquid"
 }
@@ -70,7 +71,6 @@ logger.info("Fine configurazione globale.")
 # --- DEFINIZIONI FUNZIONI ---
 
 def check_password():
-    # [Invariata]
     logger.debug("Esecuzione check_password.")
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
     if not st.session_state.password_correct:
@@ -85,7 +85,6 @@ def check_password():
     logger.debug("Check password superato."); return True
 
 def format_large_number(num):
-    # [Invariata]
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
     if abs(num) < 1_000_000: return f"{num:,.0f}"
     elif abs(num) < 1_000_000_000: return f"{num / 1_000_000:.1f}M"
@@ -94,7 +93,6 @@ def format_large_number(num):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Caricamento dati di mercato (CoinGecko)...")
 def get_coingecko_market_data(ids_list, currency):
-    # [Invariata con logging]
     logger.info(f"Tentativo fetch dati live CoinGecko per {len(ids_list)} IDs.")
     ids_string = ",".join(ids_list); url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {'vs_currency': currency, 'ids': ids_string, 'order': 'market_cap_desc','per_page': str(len(ids_list)), 'page': 1, 'sparkline': False,'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'}
@@ -115,7 +113,6 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    # [Invariata con logging e pausa 4s]
     logger.info(f"Tentativo fetch dati storici CoinGecko per {coin_id} ({days}d, {interval}).")
     time.sleep(4.0); url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {'vs_currency': currency, 'days': str(days), 'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
@@ -141,14 +138,13 @@ def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def get_fear_greed_index():
-    # [Invariata con fix sintassi/logging]
     logger.info("Tentativo fetch Fear & Greed Index.")
     url = "https://api.alternative.me/fng/?limit=1"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json()
         if data and data.get("data") and isinstance(data["data"], list) and len(data["data"]) > 0:
              latest_data = data["data"][0]; value = latest_data.get("value"); desc = latest_data.get("value_classification")
-             if value is not None and desc is not None: logger.info(f"Fear & Greed Index recuperato: {value} ({desc})."); return f"{int(value)} ({desc})"
+             if value is not None and desc is not None: logger.info(f"F&G Index: {value} ({desc})."); return f"{int(value)} ({desc})"
         logger.warning("Formato dati F&G Index inatteso."); return "N/A"
     except requests.exceptions.RequestException as req_ex:
         status_code = req_ex.response.status_code if req_ex.response is not None else "N/A"; msg = f"Errore F&G Index (Alt.me Status: {status_code}): {req_ex}"; logger.warning(msg); st.warning(msg); return "N/A"
@@ -156,12 +152,11 @@ def get_fear_greed_index():
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def get_global_market_data_cg(currency):
-    # [Invariata con fix sintassi/logging]
     logger.info("Tentativo fetch dati Global CoinGecko.")
     url = "https://api.coingecko.com/api/v3/global"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json().get('data', {})
-        total_mcap = data.get('total_market_cap', {}).get(currency.lower(), np.nan); logger.info(f"Dati Global CoinGecko recuperati (M.Cap: {total_mcap})."); return total_mcap
+        total_mcap = data.get('total_market_cap', {}).get(currency.lower(), np.nan); logger.info(f"Global CoinGecko M.Cap: {total_mcap}."); return total_mcap
     except requests.exceptions.RequestException as req_ex: msg = f"Errore API Global CoinGecko: {req_ex}"; logger.warning(msg); st.warning(msg); return np.nan
     except Exception as e: msg = f"Errore Processamento Global CoinGecko: {e}"; logger.exception(msg); st.warning(msg); return np.nan
 
@@ -282,15 +277,13 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df):
         if len_daily >= min_len_vwap_base: indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df, VWAP_PERIOD)
         else: logger.warning(f"{symbol}: Dati insuff. ({len_daily}/{min_len_vwap_base}) per VWAP(1d)")
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try: # Weekly RSI
-                df_weekly = close_daily.resample('W-MON').last()
-                if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
-                else: logger.warning(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
+            try: df_weekly = close_daily.resample('W-MON').last();
+            if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
+            else: logger.warning(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
             except Exception as e: logger.exception(f"{symbol}: Errore calcolo RSI weekly:")
-            try: # Monthly RSI
-                df_monthly = close_daily.resample('ME').last()
-                if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
-                else: logger.warning(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
+            try: df_monthly = close_daily.resample('ME').last();
+            if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
+            else: logger.warning(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
             except Exception as e: logger.exception(f"{symbol}: Errore calcolo RSI monthly:")
     else: logger.warning(f"{symbol}: Dati giornalieri vuoti o mancanti per calcolo indicatori.")
     if not hist_hourly_df.empty and 'close' in hist_hourly_df.columns:
@@ -360,16 +353,17 @@ try: # Blocco try principale
             if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
     last_update_placeholder = st.empty()
-    st.caption(f"Cache: Crypto Live ({CACHE_TTL/60:.0f}m), Storico ({CACHE_HIST_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).")
+    st.caption(f"Cache: Crypto Live ({CACHE_TTL/60:.0f}m), Storico ({CACHE_HIST_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).") # News rimosso
 
-    # --- SEZIONE MARKET OVERVIEW ---
+    # --- SEZIONE MARKET OVERVIEW (LAYOUT FISSO 2x5 + TITOLI) ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
     fear_greed_value = get_fear_greed_index()
     total_market_cap = get_global_market_data_cg(VS_CURRENCY)
     etf_flow_value = get_etf_flow()
-    traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV)
+    traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV) # Chiamata ad Alpha Vantage
 
     def format_delta(change_val, change_pct_str):
+        """ Formatta la stringa delta per st.metric, gestendo NaN/errori. """
         delta_string = None;
         if pd.notna(change_val) and isinstance(change_pct_str, str) and change_pct_str not in ['N/A', '', None]:
             try: change_pct_val = float(change_pct_str.replace('%','').strip()); delta_string = f"{change_val:+.2f} ({change_pct_val:+.2f}%)"
@@ -377,7 +371,7 @@ try: # Blocco try principale
         elif pd.notna(change_val): delta_string = f"{change_val:+.2f}"
         return delta_string
 
-    # RIGA 1 Overview (5 colonne)
+    # RIGA 1 Overview
     overview_items_row1 = [("Fear & Greed Index", None, get_fear_greed_index, "Fonte: Alternative.me"),(f"Total Crypto M.Cap ({VS_CURRENCY.upper()})", None, lambda: f"${format_large_number(total_market_cap)}", "Fonte: CoinGecko"),("Crypto ETFs Flow (Daily)", None, get_etf_flow, "Dato N/A"),("S&P 500 (SPY)", "SPY", None, "Fonte: Alpha Vantage (via ETF)"),("Nasdaq (QQQ)", "QQQ", None, "Fonte: Alpha Vantage (via ETF)")]
     overview_cols_1 = st.columns(5)
     for i, (label, ticker, func, help_text) in enumerate(overview_items_row1):
@@ -386,32 +380,34 @@ try: # Blocco try principale
             if ticker:
                 trad_info = traditional_market_data.get(ticker, {}); price = trad_info.get('price', np.nan); change = trad_info.get('change', np.nan); change_pct = trad_info.get('change_percent', 'N/A')
                 value_str = f"{price:,.2f}" if pd.notna(price) else "N/A"; delta_txt = format_delta(change, change_pct)
-                if pd.notna(change): d_color = "normal" # Set color only if change is valid
-            elif func: value_str = func() # Calculate value for non-ticker items
+                if pd.notna(change): d_color = "normal" # Fix colore delta
+            elif func: value_str = func() # Calcola valore per item non-ticker
             st.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text)
 
-    # RIGA 2 Overview (5 colonne)
+    # RIGA 2 Overview
     overview_items_row2 = [("Gold (GLD)", "GLD", None, "Fonte: Alpha Vantage (via ETF)"), ("Silver (SLV)", "SLV", None, "Fonte: Alpha Vantage (via ETF)"), ("Natural Gas (UNG)", "UNG", None, "Fonte: Alpha Vantage (via ETF)"), ("UVXY (Volatility)", "UVXY", None, "Fonte: Alpha Vantage"), ("TQQQ (Nasdaq 3x)", "TQQQ", None, "Fonte: Alpha Vantage")]
     overview_cols_2 = st.columns(5)
     for i, (label, ticker, func, help_text) in enumerate(overview_items_row2):
          with overview_cols_2[i]:
+            # Inizializza variabili per questo scope
+            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off"
             trad_info = traditional_market_data.get(ticker, {}); price = trad_info.get('price', np.nan); change = trad_info.get('change', np.nan); change_pct = trad_info.get('change_percent', 'N/A')
             value_str = f"{price:,.2f}" if pd.notna(price) else "N/A"; delta_txt = format_delta(change, change_pct)
-            d_color = "off";
-            if pd.notna(change): d_color = "normal" # Set color only if change is valid
+            if pd.notna(change): d_color = "normal" # Fix colore delta
             st.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text)
 
-    # SEZIONE TITOLI PRINCIPALI (5 colonne, 2 righe)
+    # SEZIONE TITOLI PRINCIPALI
     st.markdown("<h6>Titoli Principali (Prezzi e Var. Giorno):</h6>", unsafe_allow_html=True)
     stock_tickers_row_av = ['NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
     num_stock_cols = 5; stock_cols = st.columns(num_stock_cols)
     for idx, ticker in enumerate(stock_tickers_row_av):
         col_index = idx % num_stock_cols; current_col = stock_cols[col_index]
         with current_col:
+            # Inizializza variabili per questo scope
+            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off"
             trad_info = traditional_market_data.get(ticker, {}); price = trad_info.get('price', np.nan); change = trad_info.get('change', np.nan); change_pct = trad_info.get('change_percent', 'N/A')
             value_str = f"{price:,.2f}" if pd.notna(price) else "N/A"; delta_txt = format_delta(change, change_pct)
-            d_color = "off";
-            if pd.notna(change): d_color = "normal" # Set color only if change is valid
+            if pd.notna(change): d_color = "normal" # Fix colore delta
             st.metric(label=ticker, value=value_str, delta=delta_txt, delta_color=d_color)
     st.markdown("---")
 
@@ -420,34 +416,43 @@ try: # Blocco try principale
     logger.info("Inizio recupero dati crypto live.")
     market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
 
-    # Gestione Timestamp (Blocco corretto)
+    # Gestione Timestamp (Blocco corretto v3)
     if last_cg_update_utc and ZoneInfo:
-        try: local_tz = ZoneInfo("Europe/Rome");
-        if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
-        last_cg_update_local = last_cg_update_utc.astimezone(local_tz); last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
-        logger.info(f"Timestamp aggiornamento: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        except Exception as e: logger.exception("Errore conversione timestamp:"); last_update_placeholder.markdown(f"*Errore conversione timestamp ({e}). Ora UTC approx: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*")
-    elif last_cg_update_utc: last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=2); last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"); logger.info(f"Timestamp aggiornamento (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
-    else: logger.warning("Timestamp aggiornamento dati live CoinGecko non disponibile."); last_update_placeholder.markdown("*Timestamp aggiornamento dati live CoinGecko non disponibile.*")
+        try:
+            local_tz = ZoneInfo("Europe/Rome")
+            if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC")) # Rende aware
+            last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
+            last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
+            logger.info(f"Timestamp aggiornamento: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        except Exception as e:
+            logger.exception("Errore conversione timestamp:")
+            last_update_placeholder.markdown(f"*Errore conversione timestamp ({e}). Ora UTC approx: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*")
+    elif last_cg_update_utc:
+        last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=2)
+        last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***")
+        logger.info(f"Timestamp aggiornamento (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        logger.warning("Timestamp aggiornamento dati live CoinGecko non disponibile.")
+        last_update_placeholder.markdown("*Timestamp aggiornamento dati live CoinGecko non disponibile.*")
+
 
     # Blocco se dati live falliscono
     if market_data_df.empty:
         msg = "Errore critico: Impossibile caricare dati live CoinGecko. Tabella non generata."
         if st.session_state.get("api_warning_shown", False): msg = "Tabella Analisi Tecnica non generata causa errore caricamento dati live (Limite API?)."
         logger.error(msg); st.error(msg); st.stop()
-    logger.info("Dati live CoinGecko OK, inizio ciclo elaborazione crypto.")
+    logger.info(f"Dati live CoinGecko OK ({len(market_data_df)} righe), inizio ciclo elaborazione crypto.")
 
-    # --- CICLO PROCESSING PER OGNI COIN (REINTRODOTTO) ---
+    # --- CICLO PROCESSING PER OGNI COIN (REINTEGRATO) ---
     results = []; fetch_errors_for_display = [] # Lista separata per UI
     process_start_time = time.time()
     logger.info(f"Inizio ciclo elaborazione per {NUM_COINS} crypto.")
-    estimated_wait_secs = NUM_COINS * 2 * 4 # Stima approssimativa
-    estimated_wait_mins = estimated_wait_secs / 60
+    estimated_wait_secs = NUM_COINS * 2 * 4; estimated_wait_mins = estimated_wait_secs / 60
     with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} crypto... (Richiede ~{estimated_wait_mins:.1f} min)"):
         coin_ids_ordered = market_data_df.index.tolist()
         for i, coin_id in enumerate(coin_ids_ordered):
             logger.info(f"--- Elaborazione {i+1}/{NUM_COINS}: {coin_id} ---")
-            symbol = "N/A" # Default
+            symbol = "N/A"
             try: # Try per ciclo singolo coin
                 if coin_id not in market_data_df.index: msg = f"{coin_id}: Dati live non trovati."; logger.warning(msg); fetch_errors_for_display.append(msg); continue
                 live_data = market_data_df.loc[coin_id]; symbol = live_data.get('symbol', 'N/A').upper(); name = live_data.get('name', coin_id)
@@ -455,17 +460,15 @@ try: # Blocco try principale
                 change_1h = live_data.get('price_change_percentage_1h_in_currency', np.nan); change_24h = live_data.get('price_change_percentage_24h_in_currency', np.nan)
                 change_7d = live_data.get('price_change_percentage_7d_in_currency', np.nan); change_30d = live_data.get('price_change_percentage_30d_in_currency', np.nan)
                 change_1y = live_data.get('price_change_percentage_1y_in_currency', np.nan)
-                # Fetch dati storici
                 hist_daily_df, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
-                if status_daily != "Success": fetch_errors_for_display.append(f"{symbol}: Daily - {status_daily}") # Usa logger interno alla funzione
+                if status_daily != "Success": fetch_errors_for_display.append(f"{symbol}: Daily - {status_daily}")
                 hist_hourly_df, status_hourly = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_HOURLY, interval='hourly')
-                if status_hourly != "Success": fetch_errors_for_display.append(f"{symbol}: Hourly - {status_hourly}") # Usa logger interno alla funzione
-                # Calcola indicatori (logga errori interni)
+                if status_hourly != "Success": fetch_errors_for_display.append(f"{symbol}: Hourly - {status_hourly}")
+                logger.info(f"Calcolo indicatori per {symbol}...")
                 indicators = compute_all_indicators(symbol, hist_daily_df, hist_hourly_df)
-                # Genera segnali
+                logger.info(f"Calcolo segnali per {symbol}...")
                 gpt_signal = generate_gpt_signal(indicators.get("RSI (1d)"), indicators.get("RSI (1h)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), current_price)
                 gemini_alert = generate_gemini_alert(indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"))
-                # Aggiungi risultati
                 results.append({
                     "Rank": rank, "Symbol": symbol, "Name": name, "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal,
                     f"Prezzo ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,
@@ -526,7 +529,7 @@ try: # Blocco try principale
     if fetch_errors_unique_display:
         with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True):
             st.warning("Si sono verificati problemi durante recupero/calcolo (controlla ID CoinGecko se vedi 'Not Found'):")
-            max_errors_to_show = 30; error_list_md = ""
+            max_errors_to_show = 30; error_list_md = "" # Mostra più errori
             for i, error_msg in enumerate(fetch_errors_unique_display):
                 if i < max_errors_to_show: error_list_md += f"- {error_msg}\n"
                 elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(fetch_errors_unique_display) - max_errors_to_show} errori.\n"; break
@@ -540,37 +543,29 @@ try: # Blocco try principale
     # --- LEGENDA ---
     st.divider()
     with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False):
-        # [Legenda aggiornata]
         st.markdown("""
         *Disclaimer: Questa dashboard è solo a scopo informativo e non costituisce consulenza finanziaria.*
         **Market Overview:**
-        * **Fear & Greed Index:** Indice sentiment da Alternative.me (0=Paura Estrema, 100=Euforia Estrema).
-        * **Total Crypto M.Cap:** Capitalizzazione totale mercato crypto (Fonte: CoinGecko).
-        * **Crypto ETFs Flow:** Flusso netto giornaliero ETF crypto spot (Dato **N/A**).
-        * **S&P 500 (SPY), Nasdaq (QQQ), Gold (GLD), etc.:** Prezzi indicativi mercati tradizionali (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache lunga 4h)** causa limiti API gratuite. Visualizza variazione giornaliera (Rosso/Verde).
-        * **Titoli Principali:** Prezzi indicativi azioni (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache lunga 4h).** Visualizza variazione giornaliera (Rosso/Verde).
+        * **Fear & Greed Index:** Indice sentiment (Fonte: Alternative.me).
+        * **Total Crypto M.Cap:** Capitalizzazione totale crypto (Fonte: CoinGecko).
+        * **Crypto ETFs Flow:** Flusso netto giornaliero ETF (Dato N/A).
+        * **S&P 500 (SPY), etc.:** Prezzi mercati tradizionali (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache 4h)**. Variazione giornaliera ($ e %, Rosso/Verde).
+        * **Titoli Principali:** Prezzi azioni (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache 4h).** Variazione giornaliera ($ e %, Rosso/Verde).
         **Tabella Analisi Tecnica:**
-        * **Variazioni Percentuali (%):** Cambiamento di prezzo (Fonte: CoinGecko).
-        * **Indicatori Momentum:**
-            * **RSI (1h/1d/1w/1mo):** Relative Strength Index (0-100). `>70` Ipercomprato, `<30` Ipervenduto.
-            * **SRSI %K / %D (1d):** Stochastic RSI (0-100). `>80` Ipercomprato, `<20` Ipervenduto.
-            * **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. `>0` Momentum rialzista, `<0` Momentum ribassista.
-        * **Indicatori Trend:**
-            * **MA (20d, 50d):** Simple Moving Average.
-            * **VWAP (1d):** Volume-Weighted Average Price (ultimi 14gg).
-        * **Segnali Combinati (Esemplificativi - NON CONSULENZA):**
-            * **Gemini Alert:** Logica semplice DAILY: `⚡️ Strong Buy` (MA20>MA50 & MACD>0 & RSI<80). `🚨 Strong Sell` (MA20<MA50 & MACD<0 & RSI>20). `🟡 Hold`. `⚪️ N/D`.
-            * **GPT Signal:** Punteggio combinato multi-indicatore. `⚡️ Strong Buy` (>= 5), `🟢 Buy` (2-4), `⏳ CTB` (>0 & RSI<55), `🟡 Hold`, `⚠️ CTS` (<0 & RSI>45), `🔴 Sell` (-4 to -2), `🚨 Strong Sell` (<= -5). `⚪️ N/D`. **Cautela.**
-        * **Generale:** **N/A:** Dato non disponibile o errore (verificare Log Applicazione sotto).
+        * **Variazioni Percentuali (%):** Cambiamento prezzo (Fonte: CoinGecko).
+        * **Indicatori Momentum:** RSI, SRSI, MACD Hist.
+        * **Indicatori Trend:** MA (20d, 50d), VWAP (14d).
+        * **Segnali Combinati (Esempio):** Gemini Alert, GPT Signal. **Cautela, non consulenza.**
+        * **Generale:** N/A: Dato non disponibile/errore (Vedi Log sotto).
         **Note:**
-        * Il recupero dati storici CoinGecko è rallentato (**pausa 4s**) per cercare di rispettare limiti API gratuiti. **Il caricamento iniziale può richiedere diversi minuti.**
-        * I dati mercato tradizionale (Alpha Vantage) usano **cache lunga (4h)** per rispettare limiti API gratuiti. Richiede chiave API nei Secrets.
-        * Le performance passate non sono indicative di risultati futuri.
+        * Recupero dati storici CoinGecko rallentato (pausa 4s). **Caricamento iniziale richiede minuti.**
+        * Dati mercato tradizionale (Alpha Vantage) usano **cache 4h** (limiti API gratis). Richiede chiave API nei Secrets.
+        * DYOR. Performance passate non garantiscono futuro.
         """)
 
     # --- Footer ---
     st.divider()
-    st.caption("Disclaimer: Strumento a scopo informativo/didattico. Non costituisce consulenza finanziaria. DYOR (Do Your Own Research).")
+    st.caption("Disclaimer: Strumento a scopo informativo/didattico. Non costituisce consulenza finanziaria. DYOR.")
 
 # --- Blocco try...except principale ---
 except Exception as main_exception:
