@@ -2,7 +2,7 @@ streamlit==1.45.0
 pandas==2.2.3
 requests==2.32.3
 numpy==2.2.5
-yfinance==0.2.57
+# yfinance==0.2.57 # Commentato o rimosso perché sostituito
 feedparser==6.0.11
 tzdata==2025.2
 alpha-vantage==2.3.1
