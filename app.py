@@ -64,8 +64,6 @@ COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
 NUM_COINS = len(SYMBOLS)
 
 # Ticker per mercati tradizionali (ora per Alpha Vantage)
-# Nota: Sostituiti indici/futures con ETF comuni o simboli AV noti.
-# GLD per Oro, SPY per S&P 500, QQQ per Nasdaq 100. UVXY/TQQQ sono ETF.
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'UVXY', 'TQQQ',
                    'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR']
 
@@ -88,7 +86,6 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
     if not st.session_state.password_correct:
         password = st.text_input("🔑 Password", type="password", key="password_input")
-        # Legge la password dai secrets, se non c'è usa "Leonardo" come default (sconsigliato per produzione)
         correct_password = st.secrets.get("APP_PASSWORD", "Leonardo")
         if not correct_password:
              st.error("Password APP_PASSWORD non configurata nei secrets!")
@@ -124,6 +121,9 @@ def get_coingecko_market_data(ids_list, currency):
         'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'
     }
     timestamp_utc = datetime.now(ZoneInfo("UTC") if ZoneInfo else None)
+    # Initialize session state for warning flag if not present
+    if 'api_warning_shown' not in st.session_state:
+        st.session_state.api_warning_shown = False
     try:
         response = requests.get(url, params=params, timeout=20)
         response.raise_for_status()
@@ -133,13 +133,12 @@ def get_coingecko_market_data(ids_list, currency):
              return pd.DataFrame(), timestamp_utc
         df = pd.DataFrame(data)
         if not df.empty: df.set_index('id', inplace=True)
-        # Memorizza lo stato dell'avviso 429 per evitare doppio stop
-        st.session_state["api_warning_shown"] = False
+        st.session_state["api_warning_shown"] = False # Reset flag on success
         return df, timestamp_utc
     except requests.exceptions.HTTPError as http_err:
         if http_err.response.status_code == 429:
              st.warning("Attenzione API CoinGecko (Live): Limite richieste (429) raggiunto.")
-             st.session_state["api_warning_shown"] = True # Segnala che l'avviso è stato mostrato
+             st.session_state["api_warning_shown"] = True # Set flag on 429 error
         else: st.error(f"Errore HTTP API Mercato CoinGecko (Status: {http_err.response.status_code}): {http_err}")
         return pd.DataFrame(), timestamp_utc
     except requests.exceptions.RequestException as req_ex:
@@ -151,7 +150,6 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False) # Cache storico 60 min
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    # PAUSA AUMENTATA PER MITIGARE RATE LIMITING
     time.sleep(4.0) # <-- Pausa di 4 secondi!
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {
@@ -225,74 +223,52 @@ def get_etf_flow(): return "N/A" # Placeholder
 def get_traditional_market_data_av(tickers):
     """ Recupera l'ultimo prezzo per i ticker usando Alpha Vantage GLOBAL_QUOTE. """
     data = {ticker: np.nan for ticker in tickers} # Inizializza dizionario risultati
-
-    # Leggi la chiave API dai secrets di Streamlit in modo sicuro
     api_key = None
     try:
         api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]
         if not api_key:
             st.error("Chiave API Alpha Vantage (ALPHA_VANTAGE_API_KEY) non trovata/vuota nei Secrets.")
-            return data # Ritorna dati vuoti se chiave non impostata
+            return data
     except KeyError:
          st.error("Secret 'ALPHA_VANTAGE_API_KEY' non definito nelle impostazioni dell'app.")
          return data
     except Exception as e:
          st.error(f"Errore imprevisto nel leggere la chiave API dai secrets: {e}")
          return data
-
-    # Procedi solo se la chiave API è stata letta con successo
-    if not api_key:
-        return data
+    if not api_key: return data
 
     ts = TimeSeries(key=api_key, output_format='pandas')
-
-    # Limiti piano gratuito: ~5 chiamate/minuto, ~25/giorno (verificare!)
-    calls_made = 0
-    max_calls_per_minute = 5
-    # Aggiungi un piccolo margine alla pausa per sicurezza
+    calls_made = 0; max_calls_per_minute = 5
     delay_between_calls = (60.0 / max_calls_per_minute) + 1.0 # ~13 secondi
 
-    # Cicla sui ticker richiesti
     for ticker_sym in tickers:
-        # Gestione Limite Chiamate (molto basilare, potrebbe non essere perfetto)
         if calls_made >= 25: # Limite giornaliero approssimativo
             st.warning(f"Limite giornaliero Alpha Vantage (gratuito, ~25) probabilmente raggiunto. Stop recupero dati per {ticker_sym} e successivi.")
-            break # Interrompi il ciclo se si sospetta limite raggiunto
-
+            break
         try:
-            # Pausa per rispettare il limite al minuto
             time.sleep(delay_between_calls)
-
-            # Ottieni i dati dall'endpoint GLOBAL_QUOTE
             quote_data, meta_data = ts.get_quote_endpoint(symbol=ticker_sym)
             calls_made += 1
-
-            # Estrai il prezzo più recente ('05. price')
             if not quote_data.empty and '05. price' in quote_data.columns:
                 try:
-                    # La risposta è solitamente una stringa, converti in float
                     price = float(quote_data['05. price'].iloc[0])
                     data[ticker_sym] = price
                 except (ValueError, IndexError, TypeError) as conv_err:
                     st.warning(f"Formato prezzo non valido o errore conversione per {ticker_sym} da Alpha Vantage: {conv_err}")
                     data[ticker_sym] = np.nan
             else:
-                if quote_data.empty:
-                     st.warning(f"Risposta vuota da Alpha Vantage per {ticker_sym}. Simbolo non supportato o limite API?")
-                else:
-                     st.warning(f"Colonna '05. price' non trovata per {ticker_sym} da Alpha Vantage.")
-                data[ticker_sym] = np.nan # Mantiene NaN se il prezzo non è trovato
-
+                if quote_data.empty: st.warning(f"Risposta vuota da Alpha Vantage per {ticker_sym}. Simbolo non supportato o limite API?")
+                else: st.warning(f"Colonna '05. price' non trovata per {ticker_sym} da Alpha Vantage.")
+                data[ticker_sym] = np.nan
         except ValueError as ve:
              st.warning(f"Errore Alpha Vantage (ValueError) per {ticker_sym}: {ve}. Limite API o simbolo errato?")
              if "API call frequency" in str(ve) or "API key" in str(ve) or "limit" in str(ve).lower():
                  st.error(f"Errore chiave/limite API Alpha Vantage rilevato. Interruzione recupero dati tradizionali.")
-                 break # Interrompi se l'errore è chiaramente legato a chiave/limiti
+                 break
              data[ticker_sym] = np.nan
         except Exception as e:
             st.warning(f"Errore generico recupero dati Alpha Vantage per {ticker_sym}: {type(e).__name__} - {e}")
             data[ticker_sym] = np.nan
-
     return data
 
 # --- Funzione News RSS ---
@@ -483,7 +459,6 @@ mkt_col1, mkt_col2, mkt_col3, mkt_col4, mkt_col5 = st.columns(5)
 with mkt_col1: st.metric(label="Fear & Greed Index", value=fear_greed_value, help="Fonte: Alternative.me")
 with mkt_col2: st.metric(label=f"Total Crypto M.Cap ({VS_CURRENCY.upper()})", value=f"${format_large_number(total_market_cap)}", help="Fonte: CoinGecko")
 with mkt_col3: st.metric(label="Crypto ETFs Flow (Daily)", value=etf_flow_value, help="Dato N/A")
-# Usa i ticker AV (es. SPY invece di ^GSPC)
 with mkt_col4: st.metric(label="S&P 500 (SPY)", value=f"{traditional_market_data.get('SPY', np.nan):,.2f}" if pd.notna(traditional_market_data.get('SPY')) else "N/A")
 with mkt_col5: st.metric(label="Nasdaq (QQQ)", value=f"{traditional_market_data.get('QQQ', np.nan):,.2f}" if pd.notna(traditional_market_data.get('QQQ')) else "N/A")
 mkt_col6, mkt_col7, mkt_col8 = st.columns(3)
@@ -524,7 +499,6 @@ else: # Fallback if timestamp is missing entirely
 
 # Blocco se dati live falliscono (gestisce anche warning 429 già mostrato)
 if market_data_df.empty:
-    # Se l'errore 429 è stato già mostrato dalla funzione API, non mostrare errore critico aggiuntivo
     if not st.session_state.get("api_warning_shown", False):
         st.error("Errore critico: Impossibile caricare dati live CoinGecko. La tabella non può essere generata.")
     else:
@@ -534,7 +508,6 @@ if market_data_df.empty:
 
 # --- CICLO PROCESSING PER OGNI COIN ---
 results = []; fetch_errors = []
-# Aggiornato spinner per indicare potenziale lentezza
 process_start_time = time.time() # Misura tempo ciclo
 with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} crypto... (Richiede tempo ~{NUM_COINS*2*4/60:.1f} min)"):
     coin_ids_ordered = market_data_df.index.tolist()
@@ -559,7 +532,8 @@ with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} cry
         # Aggiungi risultati
         results.append({"Rank": rank, "Symbol": symbol, "Name": name,"Gemini Alert": gemini_alert, "GPT Signal": gpt_signal,f"Prezzo ({VS_CURRENCY.upper()})": current_price,"% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,"RSI (1h)": indicators.get("RSI (1h)"), "RSI (1d)": indicators.get("RSI (1d)"),"RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),"SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),"MACD Hist (1d)": indicators.get("MACD Hist (1d)"),f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),"VWAP (1d)": indicators.get("VWAP (1d)"),f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,})
     process_end_time = time.time()
-    st.sidebar.info(f"Tempo elaborazione crypto: {process_end_time - process_start_time:.1f} sec") # Info in sidebar
+    # Metto il tempo di elaborazione in una sidebar per non ingombrare
+    st.sidebar.info(f"Tempo elaborazione crypto: {process_end_time - process_start_time:.1f} sec")
 
 # --- CREA E VISUALIZZA DATAFRAME ---
 if results:
@@ -599,7 +573,6 @@ if results:
 else: st.warning("Nessun risultato crypto valido da visualizzare dopo l'elaborazione.")
 
 # --- EXPANDER ERRORI/NOTE ---
-# Mostra sempre l'expander, ma solo se ci sono errori mostra il warning e la lista
 fetch_errors_unique = sorted(list(set(fetch_errors)))
 if fetch_errors_unique:
     with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True): # Default a Espanso se ci sono errori
@@ -613,24 +586,33 @@ else:
      with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=False):
           st.success("Nessun problema rilevato durante recupero dati o calcolo indicatori.")
 
-
 # --- SEZIONE NEWS ---
 st.markdown("---"); st.subheader("📰 Ultime Notizie Crypto (Cointelegraph Feed)"); news_items = get_crypto_news(NEWS_FEED_URL)
 if news_items:
     for item in news_items:
         title = item.get('title', 'Titolo non disponibile'); link = item.get('link', '#'); pub_date_str = ""
+        # Aggiunto blocco try-except per la data
         if hasattr(item, 'published_parsed') and item.published_parsed:
-            try: pub_dt_utc = datetime.fromtimestamp(time.mktime(item.published_parsed));
-            if ZoneInfo: local_tz = ZoneInfo("Europe/Rome"); pub_dt_local = pub_dt_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(local_tz); pub_date_str = f" - *{pub_dt_local.strftime('%d %b, %H:%M %Z')}*"
-            else: pub_dt_local_approx = pub_dt_utc + timedelta(hours=2); pub_date_str = f" - *{pub_dt_local_approx.strftime('%d %b, %H:%M')} (approx)*"
-            except Exception: pass
+            try: # <-- TRY BLOCK START
+                pub_dt_utc = datetime.fromtimestamp(time.mktime(item.published_parsed))
+                if ZoneInfo: # Usa zoneinfo se disponibile
+                     local_tz = ZoneInfo("Europe/Rome")
+                     # Assicura che UTC sia aware prima di convertire
+                     pub_dt_local = pub_dt_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(local_tz)
+                     pub_date_str = f" - *{pub_dt_local.strftime('%d %b, %H:%M %Z')}*"
+                else: # Fallback
+                    pub_dt_local_approx = pub_dt_utc + timedelta(hours=2)
+                    pub_date_str = f" - *{pub_dt_local_approx.strftime('%d %b, %H:%M')} (approx)*"
+            except Exception as e: # <-- EXCEPT BLOCK ADDED (FIX)
+                # Se c'è errore nel parsing/conversione data, lascia stringa vuota
+                # st.warning(f"Errore parsing data notizia '{title}': {e}") # Debug opzionale
+                pass
         st.markdown(f"- [{title}]({link}){pub_date_str}")
 else: st.warning("Impossibile caricare le notizie dal feed RSS o nessuna notizia trovata.")
 
 # --- LEGENDA ---
 st.divider()
 with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False): # Collassata di default
-    # [Testo legenda invariato, ma aggiunto riferimento alle pause e cache]
     st.markdown("""
     *Disclaimer: Questa dashboard è solo a scopo informativo e non costituisce consulenza finanziaria.*
 
@@ -656,8 +638,8 @@ with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False): #
     * **Generale:** **N/A:** Dato non disponibile o errore (verificare Note sotto tabella).
 
     **Note:**
-    * Il recupero dati storici CoinGecko è rallentato (**pausa 4s**) per rispettare limiti API gratuiti. **Il caricamento iniziale può richiedere diversi minuti.**
-    * I dati mercato tradizionale (Alpha Vantage) usano **cache lunga (4h)** per rispettare limiti API gratuiti.
+    * Il recupero dati storici CoinGecko è rallentato (**pausa 4s**) per cercare di rispettare limiti API gratuiti. **Il caricamento iniziale può richiedere diversi minuti.**
+    * I dati mercato tradizionale (Alpha Vantage) usano **cache lunga (4h)** per rispettare limiti API gratuiti. Richiede chiave API nei Secrets.
     * Le performance passate non sono indicative di risultati futuri.
     """)
 
