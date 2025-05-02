@@ -164,7 +164,6 @@ def get_etf_flow(): return "N/A"
 
 @st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Caricamento dati mercato tradizionale (Alpha Vantage)...")
 def get_traditional_market_data_av(tickers):
-    # [Invariata con logging]
     logger.info(f"Tentativo fetch dati Alpha Vantage per {len(tickers)} tickers.")
     data = {ticker: {'price': np.nan, 'change': np.nan, 'change_percent': 'N/A'} for ticker in tickers}; api_key = None;
     try: api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]; logger.info("Chiave API Alpha Vantage letta.");
@@ -195,7 +194,6 @@ def get_traditional_market_data_av(tickers):
 
 # --- Funzioni Calcolo Indicatori ---
 def calculate_rsi_manual(series, period=RSI_PERIOD):
-    # [Invariata]
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
     series = series.dropna();
     if len(series) < period + 1: return np.nan
@@ -208,7 +206,6 @@ def calculate_rsi_manual(series, period=RSI_PERIOD):
     return max(0.0, min(100.0, rsi))
 
 def calculate_stoch_rsi(series, rsi_period=RSI_PERIOD, stoch_period=SRSI_PERIOD, k_smooth=SRSI_K, d_smooth=SRSI_D):
-    # [Invariata]
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan
     series = series.dropna();
     if len(series) < rsi_period + stoch_period: return np.nan, np.nan
@@ -229,7 +226,6 @@ def calculate_stoch_rsi(series, rsi_period=RSI_PERIOD, stoch_period=SRSI_PERIOD,
     return last_k, last_d
 
 def calculate_macd_manual(series, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
-    # [Invariata]
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan
     series = series.dropna();
     if len(series) < slow + signal -1 : return np.nan, np.nan, np.nan
@@ -241,14 +237,12 @@ def calculate_macd_manual(series, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SI
     return last_macd, last_signal, last_hist
 
 def calculate_sma_manual(series, period):
-    # [Invariata]
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
     series = series.dropna();
     if len(series) < period: return np.nan
     return series.rolling(window=period).mean().iloc[-1]
 
 def calculate_vwap_manual(df, period=VWAP_PERIOD):
-    # [Invariata]
     required_cols = ['close', 'volume'];
     if not isinstance(df, pd.DataFrame) or df.empty or not all(col in df.columns for col in required_cols): return np.nan
     df_valid = df.dropna(subset=required_cols);
@@ -258,8 +252,7 @@ def calculate_vwap_manual(df, period=VWAP_PERIOD):
     vwap = (df_period['close'] * df_period['volume']).sum() / total_volume; return vwap
 
 def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df):
-    # [Invariata con logging]
-    """Computes all technical indicators for a given symbol, logging warnings for insufficient data."""
+    # [Codice invariato con logging e fix try/except]
     indicators = {"RSI (1h)": np.nan, "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan,"SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,"MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan,f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan,"VWAP (1d)": np.nan,}
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5; min_len_vwap_base = VWAP_PERIOD + 1
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
@@ -277,13 +270,15 @@ def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df):
         if len_daily >= min_len_vwap_base: indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df, VWAP_PERIOD)
         else: logger.warning(f"{symbol}: Dati insuff. ({len_daily}/{min_len_vwap_base}) per VWAP(1d)")
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try: df_weekly = close_daily.resample('W-MON').last();
-            if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
-            else: logger.warning(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
-            except Exception as e: logger.exception(f"{symbol}: Errore calcolo RSI weekly:")
-            try: df_monthly = close_daily.resample('ME').last();
-            if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
-            else: logger.warning(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
+            try: # Weekly RSI
+                df_weekly = close_daily.resample('W-MON').last()
+                if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
+                else: logger.warning(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
+            except Exception as e: logger.exception(f"{symbol}: Errore calcolo RSI weekly:") # Corretto
+            try: # Monthly RSI
+                df_monthly = close_daily.resample('ME').last()
+                if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
+                else: logger.warning(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
             except Exception as e: logger.exception(f"{symbol}: Errore calcolo RSI monthly:")
     else: logger.warning(f"{symbol}: Dati giornalieri vuoti o mancanti per calcolo indicatori.")
     if not hist_hourly_df.empty and 'close' in hist_hourly_df.columns:
@@ -353,17 +348,17 @@ try: # Blocco try principale
             if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
     last_update_placeholder = st.empty()
-    st.caption(f"Cache: Crypto Live ({CACHE_TTL/60:.0f}m), Storico ({CACHE_HIST_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).") # News rimosso
+    st.caption(f"Cache: Crypto Live ({CACHE_TTL/60:.0f}m), Storico ({CACHE_HIST_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).")
 
     # --- SEZIONE MARKET OVERVIEW (LAYOUT FISSO 2x5 + TITOLI) ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
     fear_greed_value = get_fear_greed_index()
     total_market_cap = get_global_market_data_cg(VS_CURRENCY)
     etf_flow_value = get_etf_flow()
-    traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV) # Chiamata ad Alpha Vantage
+    traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV)
 
     def format_delta(change_val, change_pct_str):
-        """ Formatta la stringa delta per st.metric, gestendo NaN/errori. """
+        # [Invariata]
         delta_string = None;
         if pd.notna(change_val) and isinstance(change_pct_str, str) and change_pct_str not in ['N/A', '', None]:
             try: change_pct_val = float(change_pct_str.replace('%','').strip()); delta_string = f"{change_val:+.2f} ({change_pct_val:+.2f}%)"
@@ -389,8 +384,7 @@ try: # Blocco try principale
     overview_cols_2 = st.columns(5)
     for i, (label, ticker, func, help_text) in enumerate(overview_items_row2):
          with overview_cols_2[i]:
-            # Inizializza variabili per questo scope
-            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off"
+            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off" # Initialize
             trad_info = traditional_market_data.get(ticker, {}); price = trad_info.get('price', np.nan); change = trad_info.get('change', np.nan); change_pct = trad_info.get('change_percent', 'N/A')
             value_str = f"{price:,.2f}" if pd.notna(price) else "N/A"; delta_txt = format_delta(change, change_pct)
             if pd.notna(change): d_color = "normal" # Fix colore delta
@@ -403,8 +397,7 @@ try: # Blocco try principale
     for idx, ticker in enumerate(stock_tickers_row_av):
         col_index = idx % num_stock_cols; current_col = stock_cols[col_index]
         with current_col:
-            # Inizializza variabili per questo scope
-            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off"
+            price = np.nan; change = np.nan; change_pct = 'N/A'; value_str = "N/A"; delta_txt = None; d_color = "off" # Initialize
             trad_info = traditional_market_data.get(ticker, {}); price = trad_info.get('price', np.nan); change = trad_info.get('change', np.nan); change_pct = trad_info.get('change_percent', 'N/A')
             value_str = f"{price:,.2f}" if pd.notna(price) else "N/A"; delta_txt = format_delta(change, change_pct)
             if pd.notna(change): d_color = "normal" # Fix colore delta
@@ -416,11 +409,11 @@ try: # Blocco try principale
     logger.info("Inizio recupero dati crypto live.")
     market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
 
-    # Gestione Timestamp (Blocco corretto v3)
+    # Gestione Timestamp (Blocco corretto v4)
     if last_cg_update_utc and ZoneInfo:
         try:
             local_tz = ZoneInfo("Europe/Rome")
-            if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC")) # Rende aware
+            if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
             last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
             last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
             logger.info(f"Timestamp aggiornamento: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -529,7 +522,7 @@ try: # Blocco try principale
     if fetch_errors_unique_display:
         with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True):
             st.warning("Si sono verificati problemi durante recupero/calcolo (controlla ID CoinGecko se vedi 'Not Found'):")
-            max_errors_to_show = 30; error_list_md = "" # Mostra più errori
+            max_errors_to_show = 30; error_list_md = ""
             for i, error_msg in enumerate(fetch_errors_unique_display):
                 if i < max_errors_to_show: error_list_md += f"- {error_msg}\n"
                 elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(fetch_errors_unique_display) - max_errors_to_show} errori.\n"; break
@@ -548,7 +541,7 @@ try: # Blocco try principale
         **Market Overview:**
         * **Fear & Greed Index:** Indice sentiment (Fonte: Alternative.me).
         * **Total Crypto M.Cap:** Capitalizzazione totale crypto (Fonte: CoinGecko).
-        * **Crypto ETFs Flow:** Flusso netto giornaliero ETF (Dato N/A).
+        * **Crypto ETFs Flow:** Flusso netto giornaliero ETF (Dato **N/A**).
         * **S&P 500 (SPY), etc.:** Prezzi mercati tradizionali (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache 4h)**. Variazione giornaliera ($ e %, Rosso/Verde).
         * **Titoli Principali:** Prezzi azioni (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache 4h).** Variazione giornaliera ($ e %, Rosso/Verde).
         **Tabella Analisi Tecnica:**
