@@ -1,4 +1,4 @@
-# Versione: v16 - Logging DEBUG, Riattivato check limite AV, Fix fillna Pandas. Include mappa ID v15, AV attivo(opz.'d'), pausa 6s CG, no news etc.
+# Versione: v16 - Bottone Login, Rimossi WLD/JUP (28 coin), Pausa 6s CG, AV attivo(opz.'d'), Logging DEBUG.
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 logger.info("Logging configurato per UI (Livello DEBUG).")
 # --- FINE: Configurazione Logging in UI ---
 
+
 # Import zoneinfo
 try: from zoneinfo import ZoneInfo; logger.info("Modulo 'zoneinfo' importato.")
 except ImportError: logger.warning("Modulo 'zoneinfo' non trovato."); st.warning("Modulo 'zoneinfo' non trovato."); ZoneInfo = None
@@ -39,16 +40,21 @@ logger.info("CSS applicato.")
 
 # --- Configurazione Globale ---
 logger.info("Inizio configurazione globale.")
-SYMBOL_TO_ID_MAP = { # Mappa v15 (da input utente #54)
+# MAPPA AGGIORNATA: Rimossi WLD, JUP
+SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin", "SOL": "solana", "XRP": "ripple",
     "RNDR": "render-token", "FET": "artificial-superintelligence-alliance", "RAY": "raydium", "SUI": "sui", "ONDO": "ondo-finance",
     "ARB": "arbitrum", "TAO": "bittensor", "LINK": "chainlink", "AVAX": "avalanche-2", "HBAR": "hedera-hashgraph",
-    "PEPE": "pepe", "UNI": "uniswap", "TIA": "celestia", "JUP": "jupiter", "IMX": "immutable-x",
-    "TRUMP": "official-trump", "NEAR": "near", "AERO": "aerodrome-finance", "TRON": "tron", "AERGO": "aergo",
-    "ADA": "cardano", "MKR": "maker", "WLD": "worldcoin-org", "HYPE": "hyperliquid", "FART": "fartcoin"
+    "PEPE": "pepe", "UNI": "uniswap", "TIA": "celestia", #"JUP": "jupiter", # RIMOSSO
+    "IMX": "immutable-x", "TRUMP": "official-trump", "NEAR": "near", "AERO": "aerodrome-finance",
+    "TRON": "tron", "AERGO": "aergo", "ADA": "cardano", "MKR": "maker",
+    #"WLD": "worldcoin-org", # RIMOSSO
+    "HYPE": "hyperliquid", "FART": "fartcoin"
 }
-SYMBOLS = list(SYMBOL_TO_ID_MAP.keys()); COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
-NUM_COINS = len(SYMBOLS); logger.info(f"Numero coins configurate: {NUM_COINS}")
+SYMBOLS = list(SYMBOL_TO_ID_MAP.keys())
+COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
+NUM_COINS = len(SYMBOLS) # Ora 28
+logger.info(f"Numero coins configurate: {NUM_COINS}")
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Tickers tradizionali configurati (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"; CACHE_TTL = 1800; CACHE_HIST_TTL = CACHE_TTL * 2; CACHE_TRAD_TTL = 14400 # AV Cache 4h
@@ -59,20 +65,47 @@ logger.info("Fine configurazione globale.")
 # --- DEFINIZIONI FUNZIONI ---
 
 def check_password():
+    # Modificato per includere bottone
     logger.debug("Esecuzione check_password.")
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
+
     if not st.session_state.password_correct:
-        password = st.text_input("🔑 Password", type="password", key="password_input")
-        correct_password = st.secrets.get("APP_PASSWORD", "Leonardo")
-        if not correct_password: logger.error("Password APP_PASSWORD non configurata!"); st.error("Password APP_PASSWORD non configurata nei secrets!"); st.stop()
-        if password == correct_password:
-            logger.info("Password corretta."); st.session_state.password_correct = True
-            if st.query_params.get("logged_in") != "true": st.query_params["logged_in"] = "true"; st.rerun()
-        elif password: logger.warning("Password errata inserita."); st.warning("Password errata."); st.stop()
-        else: logger.debug("Nessuna password inserita."); st.stop()
+        # Usa colonne per affiancare input e bottone
+        pwd_col, btn_col = st.columns([3, 1])
+        with pwd_col:
+            password = st.text_input("🔑 Password", type="password", key="password_input_field")
+        with btn_col:
+            # Placeholder per allineamento verticale (può richiedere aggiustamenti CSS se necessario)
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            login_button_pressed = st.button("Accedi", key="login_button")
+
+        # Logica per verificare password su invio (Enter nel campo testo) o click bottone
+        should_check = login_button_pressed or password # Se bottone premuto O campo password non vuoto
+
+        if not should_check:
+            logger.debug("In attesa di input password o click bottone.")
+            st.stop() # Attende interazione utente
+        else:
+            # Procede alla verifica
+            correct_password = st.secrets.get("APP_PASSWORD", "Leonardo") # Usa secrets o default
+            if not correct_password:
+                logger.error("Password APP_PASSWORD non configurata!"); st.error("Password APP_PASSWORD non configurata nei secrets!"); st.stop()
+
+            if password == correct_password:
+                logger.info("Password corretta."); st.session_state.password_correct = True
+                # Opzionale: pulisci campo password dopo login?
+                # if "password_input_field" in st.session_state:
+                #     st.session_state.password_input_field = ""
+                if st.query_params.get("logged_in") != "true":
+                    st.query_params["logged_in"] = "true"; st.rerun() # Rerun per nascondere form
+            else:
+                # Mostra errore solo se c'è stato un tentativo (password inserita o bottone premuto)
+                logger.warning("Password errata inserita o tentativo con campo vuoto."); st.warning("Password errata."); st.stop()
+    # Se già loggato (password_correct è True), salta tutto e ritorna True
     logger.debug("Check password superato."); return True
 
 def format_large_number(num):
+    # [Invariata]
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
     if abs(num) < 1_000_000: return f"{num:,.0f}"
     elif abs(num) < 1_000_000_000: return f"{num / 1_000_000:.1f}M"
@@ -81,6 +114,7 @@ def format_large_number(num):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Caricamento dati di mercato (CoinGecko)...")
 def get_coingecko_market_data(ids_list, currency):
+    # [Invariata con logging]
     logger.info(f"Tentativo fetch dati live CoinGecko per {len(ids_list)} IDs.")
     ids_string = ",".join(ids_list); url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {'vs_currency': currency, 'ids': ids_string, 'order': 'market_cap_desc','per_page': str(len(ids_list)), 'page': 1, 'sparkline': False,'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'}
@@ -103,6 +137,7 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
+    # PAUSA AGGIORNATA A 6 SECONDI!
     logger.debug(f"Inizio fetch storico per {coin_id}, pausa 6s...")
     time.sleep(6.0) # <-- Pausa di 6 secondi!
     logger.debug(f"Fine pausa per {coin_id}, inizio chiamata API.")
@@ -168,7 +203,7 @@ def get_traditional_market_data_av(tickers):
     if not api_key: logger.error("Chiave API Alpha Vantage vuota."); st.error("Chiave API Alpha Vantage vuota nei Secrets."); return data
     ts = TimeSeries(key=api_key, output_format='pandas'); calls_made = 0; max_calls_per_minute = 5; delay_between_calls = (60.0 / max_calls_per_minute) + 1.0
     for ticker_sym in tickers:
-        # Check limite chiamate interne per evitare attese inutili
+        # Check limite interno (approssimativo per sessione)
         if calls_made >= 25: msg = f"Limite giornaliero AV (~25) raggiunto in questa esecuzione. Stop fetch per {ticker_sym}+."; logger.warning(msg); st.warning(msg); break
         try:
             logger.info(f"Fetch AV per {ticker_sym} (Call #{calls_made+1}, Pausa {delay_between_calls:.1f}s)..."); time.sleep(delay_between_calls); quote_data, meta_data = ts.get_quote_endpoint(symbol=ticker_sym); calls_made += 1
@@ -250,6 +285,7 @@ def calculate_vwap_manual(df, period=VWAP_PERIOD):
     vwap = (df_period['close'] * df_period['volume']).sum() / total_volume; return vwap
 
 def compute_all_indicators(symbol, hist_daily_df, hist_hourly_df):
+    # [Invariata con logging, fix try/except, no RSI 1h]
     indicators = {"RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan,"SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,"MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan,f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan,"VWAP (1d)": np.nan,}
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5; min_len_vwap_base = VWAP_PERIOD + 1
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
@@ -417,7 +453,8 @@ try: # Blocco try principale
     results = []; fetch_errors_for_display = []
     process_start_time = time.time()
     logger.info(f"Inizio ciclo elaborazione per {NUM_COINS} crypto.")
-    estimated_wait_secs = NUM_COINS * 2 * 6; estimated_wait_mins = estimated_wait_secs / 60 # Aggiornato per 6s
+    # Stima tempo aggiornata con NUM_COINS e pausa 6s
+    estimated_wait_secs = NUM_COINS * 2 * 6; estimated_wait_mins = estimated_wait_secs / 60
     with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} crypto... (Richiede ~{estimated_wait_mins:.1f} min)"):
         coin_ids_ordered = market_data_df.index.tolist()
         logger.info(f"Lista ID CoinGecko da processare (dalla chiamata live): {coin_ids_ordered}")
@@ -493,19 +530,14 @@ try: # Blocco try principale
         except Exception as df_err: logger.exception("Errore durante creazione o styling DataFrame:"); st.error(f"Errore visualizzazione tabella: {df_err}")
     else: logger.warning("Nessun risultato crypto valido da visualizzare."); st.warning("Nessun risultato crypto valido da visualizzare.")
 
-    # --- EXPANDER ERRORI/NOTE ---
-    fetch_errors_unique_display = sorted(list(set(fetch_errors_for_display)))
-    if fetch_errors_unique_display:
-        with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True):
-            st.warning("Si sono verificati problemi durante recupero/calcolo (controlla ID CoinGecko se vedi 'Not Found'):")
-            max_errors_to_show = 30; error_list_md = ""
-            for i, error_msg in enumerate(fetch_errors_unique_display):
-                if i < max_errors_to_show: error_list_md += f"- {error_msg}\n"
-                elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(fetch_errors_unique_display) - max_errors_to_show} errori.\n"; break
-            st.markdown(error_list_md)
-    else:
-         with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=False):
-              st.success("Nessun problema rilevato durante recupero dati o calcolo indicatori.")
+    # --- EXPANDER ERRORI/NOTE (RIMOSSO) ---
+    # fetch_errors_unique_display = sorted(list(set(fetch_errors_for_display)))
+    # if fetch_errors_unique_display:
+    #     with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True):
+    #         ... (codice rimosso) ...
+    # else:
+    #      with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=False):
+    #           st.success("Nessun problema rilevato durante recupero dati o calcolo indicatori.")
 
     # --- SEZIONE NEWS RIMOSSA ---
 
@@ -528,7 +560,7 @@ try: # Blocco try principale
         * **Segnali Combinati (Esempio):** Gemini Alert, GPT Signal. **Cautela, non consulenza.**
         * **Generale:** N/A: Dato non disponibile/errore (Vedi Log sotto). **Link:** Link alla pagina CoinGecko.
         **Note:**
-        * Recupero dati storici CoinGecko rallentato (**pausa 6s**). **Caricamento iniziale richiede diversi minuti.**
+        * Recupero dati storici CoinGecko rallentato (**pausa 6s**). **Caricamento iniziale richiede minuti.**
         * Dati mercato tradizionale (Alpha Vantage) usano **cache 4h** (limiti API gratis). Richiede chiave API nei Secrets.
         * DYOR. Performance passate non garantiscono futuro.
         """)
