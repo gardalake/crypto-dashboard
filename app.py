@@ -133,10 +133,13 @@ def get_coingecko_market_data(ids_list, currency):
              return pd.DataFrame(), timestamp_utc
         df = pd.DataFrame(data)
         if not df.empty: df.set_index('id', inplace=True)
+        # Memorizza lo stato dell'avviso 429 per evitare doppio stop
+        st.session_state["api_warning_shown"] = False
         return df, timestamp_utc
     except requests.exceptions.HTTPError as http_err:
         if http_err.response.status_code == 429:
              st.warning("Attenzione API CoinGecko (Live): Limite richieste (429) raggiunto.")
+             st.session_state["api_warning_shown"] = True # Segnala che l'avviso è stato mostrato
         else: st.error(f"Errore HTTP API Mercato CoinGecko (Status: {http_err.response.status_code}): {http_err}")
         return pd.DataFrame(), timestamp_utc
     except requests.exceptions.RequestException as req_ex:
@@ -459,7 +462,10 @@ col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
 with col_title: st.title("📈 Crypto Technical Dashboard Pro")
 with col_button:
     st.write("") # Spacer
+    # Reset api_warning_shown on manual refresh to allow re-checking
     if st.button("🔄 Aggiorna", help=f"Forza aggiornamento dati", key="refresh_button"):
+        if 'api_warning_shown' in st.session_state:
+             del st.session_state['api_warning_shown']
         st.cache_data.clear(); st.query_params.clear(); st.rerun()
 last_update_placeholder = st.empty()
 st.caption(f"Cache: Crypto Live ({CACHE_TTL/60:.0f}m), Crypto Storico ({CACHE_HIST_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h), Notizie (15m).")
@@ -496,27 +502,41 @@ st.markdown("---")
 # --- LOGICA PRINCIPALE DASHBOARD CRYPTO ---
 st.subheader(f"📊 Analisi Tecnica Crypto ({NUM_COINS} Asset)")
 market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
-# Gestione Timestamp
-if last_cg_update_utc and ZoneInfo:
-    try: local_tz = ZoneInfo("Europe/Rome");
-    if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
-    last_cg_update_local = last_cg_update_utc.astimezone(local_tz); last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
-    except Exception as e: last_update_placeholder.markdown(f"*Errore conversione timestamp CoinGecko: {e}*")
-elif last_cg_update_utc: last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=2); last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***")
-else: last_update_placeholder.markdown("*Timestamp aggiornamento dati live CoinGecko non disponibile.*")
 
-# Blocco se dati live falliscono (dopo aver mostrato eventuale warning 429)
-if market_data_df.empty and not st.session_state.get("api_warning_shown", False): # Evita doppio messaggio se 429 già mostrato
-    st.error("Errore critico: Impossibile caricare dati live CoinGecko. La tabella non può essere generata.")
-    st.stop()
-elif market_data_df.empty: # Se 429 era già mostrato, stoppa silenziosamente
-    st.stop()
+# Gestione Timestamp (FIXED try/except block)
+if last_cg_update_utc and ZoneInfo:
+    try: # <-- TRY BLOCK START
+        local_tz = ZoneInfo("Europe/Rome")
+        # Ensure the UTC timestamp is timezone-aware before converting
+        if last_cg_update_utc.tzinfo is None:
+            last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
+        last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
+        last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***")
+    except Exception as e: # <-- EXCEPT BLOCK ADDED
+        # Fallback if conversion fails
+        last_update_placeholder.markdown(f"*Errore conversione timestamp ({e}). Ora UTC approx: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*")
+
+elif last_cg_update_utc: # Fallback if zoneinfo failed or timestamp is naive
+     last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=2) # Approximate CEST
+     last_update_placeholder.markdown(f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***")
+else: # Fallback if timestamp is missing entirely
+     last_update_placeholder.markdown("*Timestamp aggiornamento dati live CoinGecko non disponibile.*")
+
+# Blocco se dati live falliscono (gestisce anche warning 429 già mostrato)
+if market_data_df.empty:
+    # Se l'errore 429 è stato già mostrato dalla funzione API, non mostrare errore critico aggiuntivo
+    if not st.session_state.get("api_warning_shown", False):
+        st.error("Errore critico: Impossibile caricare dati live CoinGecko. La tabella non può essere generata.")
+    else:
+        st.warning("Tabella Analisi Tecnica non generata causa errore caricamento dati live (Limite API?).")
+    st.stop() # Stoppa l'esecuzione in entrambi i casi se df è vuoto
 
 
 # --- CICLO PROCESSING PER OGNI COIN ---
 results = []; fetch_errors = []
 # Aggiornato spinner per indicare potenziale lentezza
-with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} crypto... (Richiede tempo causa pause API CoinGecko ~{NUM_COINS*2*4/60:.1f} min)"):
+process_start_time = time.time() # Misura tempo ciclo
+with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} crypto... (Richiede tempo ~{NUM_COINS*2*4/60:.1f} min)"):
     coin_ids_ordered = market_data_df.index.tolist()
     for i, coin_id in enumerate(coin_ids_ordered):
         # st.write(f"Processing {i+1}/{NUM_COINS}: {coin_id}") # Debug
@@ -538,6 +558,8 @@ with st.spinner(f"Recupero dati storici e calcolo indicatori per {NUM_COINS} cry
         gemini_alert = generate_gemini_alert(indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"))
         # Aggiungi risultati
         results.append({"Rank": rank, "Symbol": symbol, "Name": name,"Gemini Alert": gemini_alert, "GPT Signal": gpt_signal,f"Prezzo ({VS_CURRENCY.upper()})": current_price,"% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,"RSI (1h)": indicators.get("RSI (1h)"), "RSI (1d)": indicators.get("RSI (1d)"),"RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),"SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),"MACD Hist (1d)": indicators.get("MACD Hist (1d)"),f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),"VWAP (1d)": indicators.get("VWAP (1d)"),f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,})
+    process_end_time = time.time()
+    st.sidebar.info(f"Tempo elaborazione crypto: {process_end_time - process_start_time:.1f} sec") # Info in sidebar
 
 # --- CREA E VISUALIZZA DATAFRAME ---
 if results:
@@ -577,14 +599,20 @@ if results:
 else: st.warning("Nessun risultato crypto valido da visualizzare dopo l'elaborazione.")
 
 # --- EXPANDER ERRORI/NOTE ---
-if fetch_errors:
+# Mostra sempre l'expander, ma solo se ci sono errori mostra il warning e la lista
+fetch_errors_unique = sorted(list(set(fetch_errors)))
+if fetch_errors_unique:
     with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=True): # Default a Espanso se ci sono errori
-        unique_errors = sorted(list(set(fetch_errors))); st.warning("Si sono verificati problemi durante recupero/calcolo (controlla ID CoinGecko se vedi 'Not Found'):")
-        max_errors_to_show = 25; error_list_md = "" # Mostra più errori
-        for i, error_msg in enumerate(unique_errors):
+        st.warning("Si sono verificati problemi durante recupero/calcolo (controlla ID CoinGecko se vedi 'Not Found'):")
+        max_errors_to_show = 25; error_list_md = ""
+        for i, error_msg in enumerate(fetch_errors_unique):
             if i < max_errors_to_show: error_list_md += f"- {error_msg}\n"
-            elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(unique_errors) - max_errors_to_show} errori.\n"; break
+            elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(fetch_errors_unique) - max_errors_to_show} errori.\n"; break
         st.markdown(error_list_md)
+else:
+     with st.expander("ℹ️ Note Recupero Dati / Calcolo Indicatori", expanded=False):
+          st.success("Nessun problema rilevato durante recupero dati o calcolo indicatori.")
+
 
 # --- SEZIONE NEWS ---
 st.markdown("---"); st.subheader("📰 Ultime Notizie Crypto (Cointelegraph Feed)"); news_items = get_crypto_news(NEWS_FEED_URL)
@@ -602,35 +630,34 @@ else: st.warning("Impossibile caricare le notizie dal feed RSS o nessuna notizia
 # --- LEGENDA ---
 st.divider()
 with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False): # Collassata di default
+    # [Testo legenda invariato, ma aggiunto riferimento alle pause e cache]
     st.markdown("""
     *Disclaimer: Questa dashboard è solo a scopo informativo e non costituisce consulenza finanziaria.*
 
     **Market Overview:**
-    * **Fear & Greed Index:** Indice sentiment da Alternative.me (0=Paura Estrema, 100=Euforia Estrema). Misura il sentimento generale del mercato crypto.
-    * **Total Crypto M.Cap:** Capitalizzazione totale mercato crypto (Fonte: CoinGecko). Valore approssimativo dell'intero mercato.
-    * **Crypto ETFs Flow:** Flusso netto giornaliero ETF crypto spot (Dato **N/A**). Mostrerebbe l'interesse istituzionale tramite ETF.
-    * **S&P 500 (SPY), Nasdaq (QQQ), Gold (GLD), UVXY, TQQQ:** Prezzi indicativi dei principali mercati tradizionali per contesto (Fonte: Alpha Vantage via ETF/Ticker comuni). **Aggiornati con ritardo (cache lunga 4h)** a causa dei limiti API gratuite Alpha Vantage.
-    * **Titoli Principali:** Prezzi indicativi di azioni selezionate rilevanti per tech/mercato (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache lunga 4h).**
+    * **Fear & Greed Index:** Indice sentiment da Alternative.me (0=Paura Estrema, 100=Euforia Estrema).
+    * **Total Crypto M.Cap:** Capitalizzazione totale mercato crypto (Fonte: CoinGecko).
+    * **Crypto ETFs Flow:** Flusso netto giornaliero ETF crypto spot (Dato **N/A**).
+    * **S&P 500 (SPY), Nasdaq (QQQ), Gold (GLD), etc.:** Prezzi indicativi mercati tradizionali (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache lunga 4h)** causa limiti API gratuite.
+    * **Titoli Principali:** Prezzi indicativi azioni (Fonte: Alpha Vantage). **Aggiornati con ritardo (cache lunga 4h).**
 
     **Tabella Analisi Tecnica:**
-    * **Variazioni Percentuali (%):** Cambiamento di prezzo rispetto a 1 ora, 24 ore, 7 giorni, 30 giorni, 1 anno (Fonte: CoinGecko).
-    * **Indicatori Momentum (Misurano la velocità e la forza del movimento dei prezzi):**
-        * **RSI (1h/1d/1w/1mo):** Relative Strength Index (0-100). Indica se un asset è potenzialmente ipercomprato (`>70`) o ipervenduto (`<30`). Le versioni 1w/1mo sono calcolate dai dati giornalieri e danno una visione a più lungo termine.
-        * **SRSI %K / %D (1d):** Stochastic RSI (0-100). Versione più sensibile dell'RSI, utile per identificare cicli a breve termine. `>80` Ipercomprato, `<20` Ipervenduto. %K è la linea veloce, %D è la media mobile di %K.
-        * **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. Rappresenta la differenza tra la linea MACD (EMA veloce - EMA lenta) e la Signal Line (EMA della linea MACD). Barre sopra lo zero (`>0`) indicano momentum rialzista; barre sotto lo zero (`<0`) indicano momentum ribassista. L'altezza della barra indica la forza del momentum.
-    * **Indicatori Trend (Aiutano a identificare la direzione generale del mercato):**
-        * **MA (20d, 50d):** Simple Moving Average (Media Mobile Semplice) del prezzo di chiusura. Linee più lisce del prezzo, usate per identificare trend e potenziali livelli di supporto/resistenza. L'incrocio tra MA a breve (20d) e lungo termine (50d) può segnalare cambi di trend (es. Golden Cross: MA20 sopra MA50; Death Cross: MA20 sotto MA50).
-        * **VWAP (1d):** Volume-Weighted Average Price (Prezzo Medio Ponderato per Volumi). Calcolato sugli ultimi 14 giorni di dati giornalieri. Considerato da alcuni trader come un indicatore del valore "equo" basato sui volumi scambiati.
-    * **Segnali Combinati (Esemplificativi - NON CONSULENZA FINANZIARIA):**
-        * **Gemini Alert:** Logica semplice basata su confluenza di segnali **Daily**: `⚡️ Strong Buy` (MA20>MA50 & MACD Hist>0 & RSI<80). `🚨 Strong Sell` (MA20<MA50 & MACD Hist<0 & RSI>20). `🟡 Hold` altrimenti. Utile per una rapida valutazione della condizione attuale del trend giornaliero.
-        * **GPT Signal:** Logica più complessa che assegna un punteggio basato su molteplici indicatori (MAs, MACD, RSIs Daily/Weekly/Hourly, SRSI) per dare una valutazione generale. L'interpretazione è: `⚡️ Strong Buy` (Score >= 5), `🟢 Buy` (2-4), `⏳ CTB` (Close To Buy - Score > 0 & RSI<55), `🟡 Hold` (Neutro), `⚠️ CTS` (Close To Sell - Score < 0 & RSI>45), `🔴 Sell` (-4 to -2), `🚨 Strong Sell` (Score <= -5). **Da usare con estrema cautela**, è solo un esempio di combinazione.
-    * **Generale:**
-        * **N/A:** Dato non disponibile (es. da API), non applicabile, o errore nel calcolo (spesso per mancanza di dati storici sufficienti o limiti API).
+    * **Variazioni Percentuali (%):** Cambiamento di prezzo (Fonte: CoinGecko).
+    * **Indicatori Momentum:**
+        * **RSI (1h/1d/1w/1mo):** Relative Strength Index (0-100). `>70` Ipercomprato, `<30` Ipervenduto.
+        * **SRSI %K / %D (1d):** Stochastic RSI (0-100). `>80` Ipercomprato, `<20` Ipervenduto.
+        * **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. `>0` Momentum rialzista, `<0` Momentum ribassista.
+    * **Indicatori Trend:**
+        * **MA (20d, 50d):** Simple Moving Average.
+        * **VWAP (1d):** Volume-Weighted Average Price (ultimi 14gg).
+    * **Segnali Combinati (Esemplificativi - NON CONSULENZA):**
+        * **Gemini Alert:** Logica semplice DAILY: `⚡️ Strong Buy` (MA20>MA50 & MACD>0 & RSI<80). `🚨 Strong Sell` (MA20<MA50 & MACD<0 & RSI>20). `🟡 Hold`. `⚪️ N/D`.
+        * **GPT Signal:** Punteggio combinato multi-indicatore. `⚡️ Strong Buy` (>= 5), `🟢 Buy` (2-4), `⏳ CTB` (>0 & RSI<55), `🟡 Hold`, `⚠️ CTS` (<0 & RSI>45), `🔴 Sell` (-4 to -2), `🚨 Strong Sell` (<= -5). `⚪️ N/D`. **Cautela.**
+    * **Generale:** **N/A:** Dato non disponibile o errore (verificare Note sotto tabella).
 
     **Note:**
-    * I calcoli degli indicatori Weekly/Monthly dipendono dalla disponibilità e qualità dei dati Daily.
-    * Il recupero dati storici CoinGecko è rallentato (**pausa 4s**) per cercare di rispettare limiti API gratuiti. Il caricamento iniziale potrebbe richiedere diversi minuti.
-    * I dati mercato tradizionale (Alpha Vantage) usano cache lunga (**4h**) per rispettare limiti API gratuiti.
+    * Il recupero dati storici CoinGecko è rallentato (**pausa 4s**) per rispettare limiti API gratuiti. **Il caricamento iniziale può richiedere diversi minuti.**
+    * I dati mercato tradizionale (Alpha Vantage) usano **cache lunga (4h)** per rispettare limiti API gratuiti.
     * Le performance passate non sono indicative di risultati futuri.
     """)
 
