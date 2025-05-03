@@ -1244,6 +1244,3 @@ st.text_area(
 logger.info("--- Fine esecuzione script Streamlit app.py ---")
 # Chiudi lo stream di log in memoria (buona pratica)
 log_stream.close()
-
-
-Spero che queste modifiche rendano il codice ancora più robusto e manutenibile! Fammi sapere se hai altre domande o richieste.
