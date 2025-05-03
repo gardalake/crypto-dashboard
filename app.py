@@ -1,7 +1,3 @@
-Certamente. Ecco il codice completo dell'applicazione app.py, aggiornato per includere la modifica alla funzione check_password in modo che la password sia definita direttamente nel codice ("hardcoded") invece di essere letta dai secrets di Streamlit.
-
-Importante: Ho inserito "Leonardo" come password di default nel codice qui sotto. Ricordati di sostituire "Leonardo" con la password che desideri effettivamente utilizzare! Tieni presente che questa password sarà visibile a chiunque guardi il codice sorgente su GitHub.
-
 # Versione: v17.2 - Password hardcoded (non da secrets)
 # -*- coding: utf-8 -*-
 import streamlit as st
@@ -1253,6 +1249,3 @@ st.text_area(
 logger.info("--- Fine esecuzione script Streamlit app.py ---")
 # Chiudi lo stream di log in memoria (buona pratica)
 log_stream.close()
-
-
-Ora dovresti essere in grado di utilizzare questo codice nella tua app Streamlit senza l'errore relativo ai secrets per la password dell'applicazione. Ricorda di configurare ancora il secret ALPHA_VANTAGE_API_KEY se vuoi che i dati del mercato tradizionale vengano caricati.
