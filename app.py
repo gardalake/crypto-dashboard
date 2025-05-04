@@ -1,4 +1,4 @@
-# Version: v0.7 - Translate to English, Fix Color Styling, Rename VWAP%, Style Heuristic Pred.
+# Version: v0.7 - Translate to English, Fix Color Styling, Rename VWAP%, Style Heuristic Pred. - Syntax Fix 8 (!)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -94,7 +94,7 @@ def check_password():
     if not st.session_state.password_correct:
         pwd_col, btn_col = st.columns([3, 1])
         with pwd_col: password = st.text_input("🔑 Password", type="password", key="password_input_field")
-        with btn_col: st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True); login_button_pressed = st.button("Login", key="login_button") # Changed to Login
+        with btn_col: st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True); login_button_pressed = st.button("Login", key="login_button")
         should_check = login_button_pressed or (password and password != "")
         if not should_check: logger.debug("Waiting for password input or button click."); st.stop()
         else:
@@ -114,7 +114,7 @@ def format_large_number(num):
     elif num_abs < 1_000_000_000_000: return f"{sign}{num_abs / 1_000_000_000:.1f}B"
     else: return f"{sign}{num_abs / 1_000_000_000_000:.2f}T"
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner="Loading market data (CoinGecko)...") # English spinner
+@st.cache_data(ttl=CACHE_TTL, show_spinner="Loading market data (CoinGecko)...")
 def get_coingecko_market_data(ids_list, currency):
     """Fetches live market data from CoinGecko."""
     logger.info(f"Attempting CoinGecko live data fetch for {len(ids_list)} IDs.")
@@ -217,7 +217,7 @@ def get_global_market_data_cg(currency):
 
 def get_etf_flow(): logger.debug("get_etf_flow called (placeholder)."); return "N/A"
 
-@st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Loading traditional market data (Alpha Vantage)...") # English
+@st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Loading traditional market data (Alpha Vantage)...")
 def get_traditional_market_data_av(tickers):
     """Fetches quote data from Alpha Vantage for traditional tickers."""
     logger.info(f"Attempting Alpha Vantage fetch for {len(tickers)} tickers."); data = {ticker: {'price': np.nan, 'change': np.nan, 'change_percent': 'N/A'} for ticker in tickers}; api_key = None
@@ -313,7 +313,6 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     """Calculates all technical indicators (last value) for the table."""
-    # *** Renamed VWAP % Change key ***
     indicators = {"RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,"MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5; min_len_sma_short = MA_SHORT; min_len_sma_long = MA_LONG; min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
 
@@ -321,7 +320,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         if 'volume' not in hist_daily_df.columns: logger.warning(f"{symbol}: TABLE: 'volume' column missing. VWAP N/A."); hist_daily_df['volume'] = np.nan
         close_daily = hist_daily_df['close'].dropna(); len_daily = len(close_daily); df_for_vwap = hist_daily_df[['close', 'volume']]
 
-        # Daily indicators
+        # --- Daily indicators ---
         if len_daily >= min_len_rsi_base: indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_rsi_base}) for RSI(1d)")
         if len_daily >= min_len_srsi_base: k, d = calculate_stoch_rsi(close_daily, RSI_PERIOD, SRSI_PERIOD, SRSI_K, SRSI_D); indicators["SRSI %K (1d)"] = k; indicators["SRSI %D (1d)"] = d
@@ -336,21 +335,19 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
             indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
             if len(df_for_vwap) >= min_len_vwap_change:
                 vwap_today = indicators["VWAP (1d)"]; vwap_yesterday = calculate_vwap_manual(df_for_vwap.iloc[-(VWAP_PERIOD + 1):-1], VWAP_PERIOD)
-                if pd.notna(vwap_today) and pd.notna(vwap_yesterday) and vwap_yesterday != 0:
-                    # *** Use renamed key ***
-                    indicators["VWAP %"] = ((vwap_today - vwap_yesterday) / vwap_yesterday) * 100
+                if pd.notna(vwap_today) and pd.notna(vwap_yesterday) and vwap_yesterday != 0: indicators["VWAP %"] = ((vwap_today - vwap_yesterday) / vwap_yesterday) * 100
                 else: logger.warning(f"{symbol}: TABLE: Cannot calculate VWAP % Change")
             else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap)}/{min_len_vwap_change}) for VWAP % Change(1d)")
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap)}/{min_len_vwap_base}) for VWAP(1d)")
 
-        # Weekly/Monthly indicators
+        # --- Weekly/Monthly indicators ---
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try:
+            try: # Weekly RSI
                 df_weekly = close_daily.resample('W-MON').last()
                 if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Weekly data ({len(df_weekly.dropna())}/{min_len_rsi_base}) for RSI(1w)")
             except Exception as e: logger.exception(f"{symbol}: TABLE: Error calculating weekly RSI:")
-            try:
+            try: # Monthly RSI
                 df_monthly = close_daily.resample('ME').last()
                 if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Monthly data ({len(df_monthly.dropna())}/{min_len_rsi_base}) for RSI(1mo)")
@@ -364,17 +361,30 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, sr
     required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, vwap_1d, current_price];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     score = 0
-    if current_price > ma_long: score += 1; else: score -= 1
-    if ma_short > ma_long: score += 2; else: score -= 2
-    if current_price > vwap_1d: score += 1; else: score -= 1
-    if macd_hist > 0: score += 2; else: score -= 2
-    if rsi_1d < 30: score += 2; elif rsi_1d < 40: score += 1; elif rsi_1d > 70: score -= 2; elif rsi_1d > 60: score -= 1
+    if current_price > ma_long: score += 1
+    else: score -= 1
+    if ma_short > ma_long: score += 2
+    else: score -= 2
+    if current_price > vwap_1d: score += 1
+    else: score -= 1
+    if macd_hist > 0: score += 2
+    else: score -= 2
+    if rsi_1d < 30: score += 2
+    elif rsi_1d < 40: score += 1
+    elif rsi_1d > 70: score -= 2
+    elif rsi_1d > 60: score -= 1
     if pd.notna(rsi_1w):
-        if rsi_1w < 40: score += 1; elif rsi_1w > 60: score -= 1
+        if rsi_1w < 40: score += 1
+        elif rsi_1w > 60: score -= 1
     if pd.notna(srsi_k) and pd.notna(srsi_d):
-        if srsi_k < 20 and srsi_d < 20: score += 1; elif srsi_k > 80 and srsi_d > 80: score -= 1
-        elif srsi_k > srsi_d: score += 0.5; elif srsi_k < srsi_d: score -= 0.5
-    if score >= 5.5: return "⚡️ Strong Buy"; elif score >= 2.5: return "🟢 Buy"; elif score <= -5.5: return "🚨 Strong Sell"; elif score <= -2.5: return "🔴 Sell"
+        if srsi_k < 20 and srsi_d < 20: score += 1
+        elif srsi_k > 80 and srsi_d > 80: score -= 1
+        elif srsi_k > srsi_d: score += 0.5
+        elif srsi_k < srsi_d: score -= 0.5
+    if score >= 5.5: return "⚡️ Strong Buy"
+    elif score >= 2.5: return "🟢 Buy"
+    elif score <= -5.5: return "🚨 Strong Sell"
+    elif score <= -2.5: return "🔴 Sell"
     elif score > 0: return "⏳ CTB" if rsi_1d < 60 and current_price > vwap_1d else "🟡 Hold"
     else: return "⚠️ CTS" if rsi_1d > 40 and current_price < vwap_1d else "🟡 Hold"
 
@@ -472,10 +482,10 @@ try:
     # --- Title, Refresh Button, Timestamp ---
     col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
     with col_title:
-        st.title("📈 Crypto Technical Dashboard Pro") # English Title
+        st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") # Spacer
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button"): # English
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button"):
             logger.info("Refresh button clicked.")
             if 'api_warning_shown' in st.session_state:
                 del st.session_state['api_warning_shown']
@@ -484,12 +494,10 @@ try:
             st.rerun()
 
     last_update_placeholder = st.empty()
-    # English Caption
     st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Chart History ({CACHE_CHART_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
 
-
     # --- Market Overview Section ---
-    st.markdown("---"); st.subheader("🌐 Market Overview") # English
+    st.markdown("---"); st.subheader("🌐 Market Overview")
     fear_greed_value = get_fear_greed_index(); total_market_cap = get_global_market_data_cg(VS_CURRENCY); etf_flow_value = get_etf_flow(); traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV)
     def format_delta(change_val, change_pct_str):
         delta_string = None;
@@ -506,7 +514,7 @@ try:
             if pd.notna(change): d_color = "normal"
         elif value_func:
             try: value_str = value_func(); value_str = str(value_str) if value_str is not None else "N/A"
-            except Exception as e: logger.error(f"Error in value_func '{label}': {e}"); value_str = "Error" # English Error
+            except Exception as e: logger.error(f"Error in value_func '{label}': {e}"); value_str = "Error"
             delta_txt = None; d_color = "off"
         else: value_str = "N/A";
         column.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text)
@@ -550,9 +558,10 @@ try:
         if st.session_state.get("api_warning_shown", False): msg = "Technical Analysis table not generated: error loading live data (possible CoinGecko API limit reached)."
         logger.error(msg); st.error(msg)
     else:
+        # --- Process Table ---
         logger.info(f"Live CoinGecko data OK ({len(market_data_df)} rows), starting table processing loop."); results = []; fetch_errors_for_display = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
         if effective_num_coins != NUM_COINS: logger.warning(f"Coin count from API ({effective_num_coins}) != configured ({NUM_COINS}). Processing {effective_num_coins}.")
-        estimated_wait_secs = effective_num_coins * 1 * 6.0; estimated_wait_mins = estimated_wait_secs / 60; spinner_msg = f"Fetching history and calculating table indicators for {effective_num_coins} crypto... (~{estimated_wait_mins:.1f} min)" # English
+        estimated_wait_secs = effective_num_coins * 1 * 6.0; estimated_wait_mins = estimated_wait_secs / 60; spinner_msg = f"Fetching history and calculating table indicators for {effective_num_coins} crypto... (~{estimated_wait_mins:.1f} min)"
         with st.spinner(spinner_msg):
             coin_ids_ordered = market_data_df.index.tolist(); logger.info(f"CoinGecko ID list for table: {coin_ids_ordered}"); actual_processed_count = 0
             for i, coin_id in enumerate(coin_ids_ordered):
@@ -577,14 +586,14 @@ try:
                     results.append({
                         "Rank": rank, "Symbol": symbol, "Name": name,
                         "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal, "Heuristic Pred.": heuristic_pred,
-                        f"Price ({VS_CURRENCY.upper()})": current_price, # English label
+                        f"Price ({VS_CURRENCY.upper()})": current_price,
                         "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,
                         "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),
                         "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),
                         "MACD Hist (1d)": indicators.get("MACD Hist (1d)"),
                         f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),
-                        "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), # Renamed Key
-                        f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, # English Label
+                        "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), # Use renamed key
+                        f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
                         "Link": coingecko_link
                     })
                     logger.info(f"--- Table processing for {symbol} completed. ---"); actual_processed_count += 1
@@ -596,15 +605,13 @@ try:
             logger.info(f"Creating final table DataFrame with {len(results)} results.");
             try:
                 table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
-                # *** Updated Column Order and VWAP % name ***
                 cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", "Heuristic Pred.", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
-                # *** Update pct_cols list ***
                 formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_srsi_cols = [c for c in df_display_table.columns if ("RSI" in c or "SRSI" in c)]; macd_cols = [c for c in df_display_table.columns if "MACD" in c]; ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
                 if currency_col in df_display_table.columns: formatters[currency_col] = "${:,.4f}";
                 if volume_col in df_display_table.columns: formatters[volume_col] = lambda x: f"${format_large_number(x)}";
                 for col in pct_cols:
-                    if col in df_display_table.columns: formatters[col] = "{:+.2f}%" # Format all pct cols
+                    if col in df_display_table.columns: formatters[col] = "{:+.2f}%"
                 for col in rsi_srsi_cols:
                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
                 for col in macd_cols:
@@ -613,7 +620,7 @@ try:
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
 
-                # --- Updated Signal Styling Function (v0.7) ---
+                # --- Updated Styling Function (v0.7) ---
                 def highlight_signal_style(val):
                     """Styles signals including Heuristic Pred."""
                     style = 'color: #6c757d;' # Default grey
@@ -635,7 +642,6 @@ try:
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;' # Lighter grey
                     return f'{style} font-weight: {font_weight};'
 
-                # --- Corrected Percentage Column Styling (v0.7) ---
                 def highlight_pct_col_style(val):
                     """Colors percentage values green/red."""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
@@ -648,90 +654,96 @@ try:
                     logger.debug(f"Applying PCT style to columns: {cols_for_pct_style}")
                     styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
 
-                # Apply signal style to Gemini, GPT, and Heuristic columns
-                signal_cols_to_style = ["Gemini Alert", "GPT Signal", "Heuristic Pred."]
+                signal_cols_to_style = ["Gemini Alert", "GPT Signal", "Heuristic Pred."] # Apply to all three
                 for col in signal_cols_to_style:
                      if col in df_display_table.columns:
                          logger.debug(f"Applying Signal style to column: {col}")
                          styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
 
-                logger.info("Displaying styled table DataFrame."); st.dataframe(styled_table, use_container_width=True, column_config={"Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")}) # English help
-            except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}") # English
-        else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.") # English
+                logger.info("Displaying styled table DataFrame."); st.dataframe(styled_table, use_container_width=True, column_config={"Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")})
+            except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
+        else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
 
         # --- EXPANDER ERRORI RIMOSSO (v0.6) ---
 
     # --- Chart Section ---
-    st.divider(); st.subheader("💹 Detailed Coin Chart") # English
-    chart_symbol = st.selectbox("Select a coin for the chart:", options=SYMBOLS, index=0, key="chart_coin_selector") # English
+    st.divider(); st.subheader("💹 Detailed Coin Chart")
+    # Use columns for Selector and Price Metric
+    sel_col, price_col = st.columns([3, 1])
+    with sel_col:
+        chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector") # English
 
-    # --- Display Current Price for Selected Coin ---
-    latest_price_placeholder = st.empty() # Placeholder to show price next to selector if possible
-    if chart_symbol:
-        chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
-        if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
-             latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
-             if pd.notna(latest_price):
-                 # Use columns to display price next to selector - might require tweaking alignment depending on screen size
-                 # Simplified: Display below selector for better consistency
-                 latest_price_placeholder.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
-             else:
-                 latest_price_placeholder.caption(f"Current price for {chart_symbol} unavailable.") # English
-        elif chart_coin_id:
-             latest_price_placeholder.caption(f"Current price for {chart_symbol} unavailable (live data missing).") # English
+    # Display Current Price in the second column
+    with price_col:
+        st.write("") # Add a little space above the metric
+        st.write("") # Add a little space above the metric
+        if chart_symbol:
+            chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
+            # Ensure market_data_df was loaded successfully before trying to access it
+            if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
+                latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
+                if pd.notna(latest_price):
+                    st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
+                else:
+                    st.caption(f"Current price N/A") # Short N/A message
+            else:
+                st.caption(f"Current price N/A")
 
-    chart_placeholder = st.empty() # Placeholder for chart/messages
+
+    chart_placeholder = st.empty()
     if chart_symbol:
         chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
         if chart_coin_id:
             logger.info(f"CHART: Attempting to load data for {chart_symbol} ({chart_coin_id}) chart.")
             with chart_placeholder:
-                 with st.spinner(f"Loading data and chart for {chart_symbol}..."): # English
+                 with st.spinner(f"Loading data and chart for {chart_symbol}..."):
                     chart_hist_df, chart_status = get_coingecko_historical_data_for_chart(chart_coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY)
                     if chart_status == "Success" and not chart_hist_df.empty:
                         fig = create_coin_chart(chart_hist_df.copy(), chart_symbol)
                         if fig: st.plotly_chart(fig, use_container_width=True); logger.info(f"CHART: Chart for {chart_symbol} displayed.")
-                        else: st.error(f"Could not generate chart for {chart_symbol} (indicator calculation or internal error, see log).") # English
-                    else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})") # English
-        else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.") # English
+                        else: st.error(f"Could not generate chart for {chart_symbol} (indicator calculation or internal error, see log).")
+                    else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})")
+        else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.")
+
+    # --- Forecast Section Removed (v0.6) ---
 
     # --- Legend (Improved v0.7) ---
     st.divider();
-    with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False): # English Title, default collapsed
+    with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False):
         st.markdown("""
         *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
 
         **Market Overview:**
         *   **Fear & Greed Index:** Crypto market sentiment index (0=Extreme Fear, 100=Extreme Greed). Low values suggest fear (potential opportunity), high values suggest greed (potential risk). Source: Alternative.me.
         *   **Total Crypto M.Cap:** Total market capitalization ($) of all cryptocurrencies. Indicates the overall size of the crypto market. Source: CoinGecko.
-        *   **Crypto ETFs Flow:** Daily net capital flow ($) into spot crypto ETFs (e.g., Bitcoin). Positive=Net Inflows, Negative=Net Outflows. **Data N/A in this version.**
+        *   **Crypto ETFs Flow:** Daily net capital flow ($) into spot crypto ETFs. Positive=Net Inflows, Negative=Net Outflows. **Data N/A in this version.**
         *   **S&P 500 (SPY), etc.:** Price and daily change for traditional market benchmarks for macro comparison. Source: Alpha Vantage (**4h Cache**, delayed update).
 
         **Crypto Technical Analysis Table:**
         *   **Rank:** Position by market capitalization (Source: CoinGecko).
         *   **Gemini Alert / GPT Signal:** **Exemplary and experimental** signals generated automatically. **NOT trading recommendations.** Use with extreme caution and always Do Your Own Research (DYOR). Logic combines MA, MACD, RSI, VWAP.
-            *   ⚡️ Strong Buy / 🟢 Buy: Aggregated technical conditions are potentially bullish.
-            *   🚨 Strong Sell / 🔴 Sell: Aggregated technical conditions are potentially bearish.
+            *   ⚡️ Strong Buy / 🟢 Buy: Aggregated technical conditions potentially bullish.
+            *   🚨 Strong Sell / 🔴 Sell: Aggregated technical conditions potentially bearish.
             *   🟡 Hold: Neutral or mixed conditions.
             *   ⏳ CTB (Consider To Buy): Potentially bullish trend, but requires confirmation/monitoring.
             *   ⚠️ CTS (Consider To Sell): Potentially bearish trend, but requires confirmation/monitoring.
             *   ⚪️ N/A: Signal unavailable (insufficient data).
-        *   **Heuristic Pred.:** **Simplistic / experimental** prediction based *only* on the price change over the last 3 days (default). **NOT AI, NOT reliable.** For illustrative purposes only.
-            *   ⬆️ Up: Price increased >1% in the last 3 days.
-            *   ⬇️ Down: Price decreased >1% in the last 3 days.
-            *   ➡️ Flat: Price change between -1% and +1% in the last 3 days.
-            *   ⚪️ N/A: Not calculable (insufficient data).
+        *   **Heuristic Pred.:** **Simplistic / experimental** prediction based *only* on the price change over the last 3 days (default). **NOT AI, NOT reliable.** For illustrative purposes only. Uses +/- 1% threshold.
+            *   ⬆️ Up (Green): Price increased >1% in last 3 days.
+            *   ⬇️ Down (Red): Price decreased >1% in last 3 days.
+            *   ➡️ Flat (Grey): Price change between -1% and +1% in last 3 days.
+            *   ⚪️ N/A (Grey): Not calculable (insufficient data).
         *   **Price:** Current price ($) (Source: CoinGecko).
-        *   **% 1h...1y:** Percentage price changes over timeframes (Source: CoinGecko).
-        *   **RSI (1d, 1w, 1mo):** Relative Strength Index (Daily, Weekly, Monthly). Measures the speed and strength of price movements. <30 suggests oversold (potential bounce), >70 suggests overbought (potential pullback). Comparing timeframes gives insight into short, medium, and long-term momentum.
+        *   **% 1h...1y:** Percentage price changes over timeframes (Source: CoinGecko). Color-coded Red/Green.
+        *   **RSI (1d, 1w, 1mo):** Relative Strength Index (Daily, Weekly, Monthly). Measures speed and strength of price movements. <30 suggests oversold (potential bounce), >70 suggests overbought (potential pullback). Comparing timeframes gives insight into short-, medium-, and long-term momentum.
         *   **SRSI %K / %D (1d):** Stochastic RSI (Daily). More sensitive oscillator applied to RSI. %K < 20 suggests oversold, > 80 suggests overbought. %K crossing above %D is often seen as bullish, below as bearish, especially exiting extreme zones.
-        *   **MACD Hist (1d):** MACD Histogram (Daily). Measures momentum. Positive bars = Bullish momentum (rising or falling); Negative bars = Bearish momentum (rising or falling). Height/Depth indicates momentum strength.
-        *   **MA(20d) / MA(50d):** Simple Moving Averages (Daily). Trend lines. Price > MA = Bullish trend; Price < MA = Bearish trend. MA20 crossing above MA50 ('Golden Cross') is bullish; opposite ('Death Cross') is bearish.
-        *   **VWAP (1d):** Volume Weighted Average Price (Daily, 14 periods). Average price weighted by volume. Often seen as the 'fair price' for the period; Price > VWAP suggests strength, Price < VWAP suggests weakness (daily bias).
-        *   **VWAP %:** Daily % change of the VWAP compared to the previous day. Indicates if the volume-weighted 'fair price' is trending up or down day-over-day.
-        *   **Volume 24h:** Total traded volume ($) (Source: CoinGecko).
+        *   **MACD Hist (1d):** MACD Histogram (Daily). Measures momentum. Positive bars = Bullish momentum (strength indicated by height); Negative bars = Bearish momentum (strength indicated by depth). Crossing zero line can be significant.
+        *   **MA(20d) / MA(50d):** Simple Moving Averages (Daily). Trend lines. Price > MA = Bullish trend; Price < MA = Bearish trend. MA20 crossing above MA50 ('Golden Cross') is bullish; opposite ('Death Cross') is bearish. Useful for identifying trend direction and potential support/resistance.
+        *   **VWAP (1d):** Volume Weighted Average Price (Daily, 14 periods). Average price weighted by volume. Often seen as the 'fair price' for the period; Price > VWAP suggests strength (buyers in control), Price < VWAP suggests weakness (sellers in control).
+        *   **VWAP %:** Daily % change of the VWAP compared to the previous day. Indicates if the volume-weighted 'fair price' is trending up or down day-over-day. Color-coded Red/Green.
+        *   **Volume 24h:** Total traded volume ($) (Source: CoinGecko). High volume can confirm price moves.
         *   **Link:** Direct link to the coin's page on CoinGecko.
-        *   **N/A:** Data not available.
+        *   **N/A:** Data not available (e.g., insufficient history, API error).
 
         **Detailed Coin Chart:**
         *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d) for the selected coin for deeper visual analysis.
@@ -742,10 +754,10 @@ try:
         *   Traditional Market data (Alpha Vantage) has a **4-hour cache** due to strict free API limits.
         *   **DYOR (Do Your Own Research):** Always conduct thorough research before making investment decisions. Past performance is not indicative of future results.
         """)
-    st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.") # English
-except Exception as main_exception: logger.exception("!!! UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"Unexpected error: {main_exception}. Check the log.") # English
+    st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
+except Exception as main_exception: logger.exception("!!! UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"Unexpected error: {main_exception}. Check the log.")
 
 # --- Application Log Display ---
-st.divider(); st.subheader("📄 Application Log"); st.caption("Logs generated during the last app run (INFO Level). Useful for monitoring.") # English
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area", help="Select All (Ctrl+A or Cmd+A) and Copy (Ctrl+C or Cmd+C) to analyze or share.") # English
+st.divider(); st.subheader("📄 Application Log"); st.caption("Logs generated during the last app run (INFO Level). Useful for monitoring.")
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area", help="Select All (Ctrl+A or Cmd+A) and Copy (Ctrl+C or Cmd+C) to analyze or share.")
 logger.info("--- End of Streamlit script execution: app.py ---"); log_stream.close()
