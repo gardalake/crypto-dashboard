@@ -1,8 +1,7 @@
 streamlit
 pandas
 requests
-numpy # No version specified
+numpy
 alpha-vantage
 plotly
-pandas-ta # No version specified
 setuptools
