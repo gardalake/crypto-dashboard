@@ -1,4 +1,4 @@
-# Version: v0.7 - Add CoinCodex BTC Pred Section, Translate, Fix Styling, Rename VWAP%, Style Heuristic Pred.
+# Version: v0.8 - Remove CoinCodex, Apply v0.7 fixes (English, Styling, VWAP%, Heuristic, Latest Price), Syntax Corrected
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -65,13 +65,14 @@ CACHE_TTL = 1800  # 30 min
 CACHE_HIST_TTL = CACHE_TTL * 2 # 60 min (Used for table indicators)
 CACHE_CHART_TTL = CACHE_TTL # 30 min (Separate shorter cache for chart data)
 CACHE_TRAD_TTL = 14400 # 4h (Alpha Vantage)
-CACHE_COINCODEX_TTL = CACHE_TTL * 4 # 2h Cache for CoinCodex prediction
 DAYS_HISTORY_DAILY = 365
-DAYS_HISTORY_HOURLY = 7 # Not used for indicators currently, but kept
+DAYS_HISTORY_HOURLY = 7
 RSI_PERIOD = 14
 SRSI_PERIOD = 14
 SRSI_K = 3
 SRSI_D = 3
+SRSI_OB = 80.0 # Overbought threshold
+SRSI_OS = 20.0 # Oversold threshold
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
@@ -337,12 +338,12 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 
         # --- Weekly/Monthly indicators ---
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try:
+            try: # Weekly RSI
                 df_weekly = close_daily.resample('W-MON').last()
                 if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Weekly data ({len(df_weekly.dropna())}/{min_len_rsi_base}) for RSI(1w)")
             except Exception as e: logger.exception(f"{symbol}: TABLE: Error calculating weekly RSI:")
-            try:
+            try: # Monthly RSI
                 df_monthly = close_daily.resample('ME').last()
                 if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Monthly data ({len(df_monthly.dropna())}/{min_len_rsi_base}) for RSI(1mo)")
@@ -372,8 +373,8 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, sr
         if rsi_1w < 40: score += 1
         elif rsi_1w > 60: score -= 1
     if pd.notna(srsi_k) and pd.notna(srsi_d):
-        if srsi_k < 20 and srsi_d < 20: score += 1
-        elif srsi_k > 80 and srsi_d > 80: score -= 1
+        if srsi_k < SRSI_OS and srsi_d < SRSI_OS: score += 1 # Use thresholds
+        elif srsi_k > SRSI_OB and srsi_d > SRSI_OB: score -= 1 # Use thresholds
         elif srsi_k > srsi_d: score += 0.5
         elif srsi_k < srsi_d: score -= 0.5
     if score >= 5.5: return "⚡️ Strong Buy"
@@ -468,49 +469,6 @@ def create_coin_chart(df, symbol):
     fig.update_layout(title=f'{symbol}/{VS_CURRENCY.upper()} Daily Technical Analysis', xaxis_title=None, yaxis_title=f'Price ({VS_CURRENCY.upper()})', yaxis2_title='RSI', xaxis_rangeslider_visible=False, legend_title_text='Indicators', height=600, margin=dict(l=50, r=50, t=50, b=50), hovermode="x unified" )
     fig.update_yaxes(autorange=True, row=1, col=1); logger.info(f"CHART: Plotly chart created for {symbol}."); return fig
 
-# --- CoinCodex Prediction Function (NEW v0.7) ---
-@st.cache_data(ttl=CACHE_COINCODEX_TTL, show_spinner=False)
-def fetch_btc_coincodex_predictions():
-    """Fetches short-term BTC price predictions from CoinCodex (Unofficial Endpoint)."""
-    logger.info("COINCODEX: Attempting to fetch BTC predictions.")
-    url = "https://coincodex.com/api/coincodex/get_coin_predicted?symbol=BTC"
-    headers = { # Add a basic user-agent header
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=15) # Added headers and timeout
-        if response.status_code == 200:
-            data = response.json()
-            # Extract specific predictions if possible (keys might change!)
-            # Assuming structure based on common patterns or previous observation
-            predictions = {
-                "5_day_prediction": data.get("predicted_price_5d", "N/A"),
-                "1_month_prediction": data.get("predicted_price_1m", "N/A"),
-                "3_month_prediction": data.get("predicted_price_3m", "N/A") # Key might be different
-            }
-            # Basic validation/formatting (assuming prices are returned as numbers)
-            for key, value in predictions.items():
-                try:
-                    predictions[key] = f"${float(value):,.2f}" if pd.notna(value) and value != "N/A" else "N/A"
-                except (ValueError, TypeError):
-                     logger.warning(f"COINCODEX: Could not format prediction value '{value}' for key '{key}'. Keeping as is.")
-                     predictions[key] = str(value) # Keep as string if formatting fails
-            logger.info(f"COINCODEX: BTC predictions fetched: {predictions}")
-            return predictions, "Success"
-        else:
-            status_msg = f"Error {response.status_code}"
-            logger.error(f"COINCODEX: Failed to fetch BTC predictions. Status: {response.status_code}, Response: {response.text[:200]}...") # Log beginning of error response
-            return None, status_msg
-    except requests.exceptions.RequestException as e:
-        status_msg = f"Request Error ({type(e).__name__})"
-        logger.error(f"COINCODEX: Request error fetching BTC predictions: {e}")
-        return None, status_msg
-    except Exception as e:
-        status_msg = f"Processing Error ({type(e).__name__})"
-        logger.exception("COINCODEX: Error processing BTC prediction response:")
-        return None, status_msg
-
-
 # --- START OF MAIN APP EXECUTION ---
 logger.info("Starting main UI execution.")
 try:
@@ -529,7 +487,7 @@ try:
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
 
     last_update_placeholder = st.empty()
-    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Chart History ({CACHE_CHART_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h), CoinCodex ({CACHE_COINCODEX_TTL/3600:.1f}h).") # Added CoinCodex Cache
+    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Chart History ({CACHE_CHART_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
 
 
     # --- Market Overview Section ---
@@ -631,22 +589,27 @@ try:
                 table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
                 cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", "Heuristic Pred.", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
-                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_srsi_cols = [c for c in df_display_table.columns if ("RSI" in c or "SRSI" in c)]; macd_cols = [c for c in df_display_table.columns if "MACD" in c]; ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_srsi_cols = [c for c in df_display_table.columns if ("RSI" in c or "SRSI" in c) and "%" not in c]; # Exclude SRSI %K/D from default num formatting
+                macd_cols = [c for c in df_display_table.columns if "MACD" in c]; ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"] # Separate for specific formatting/styling
+
                 if currency_col in df_display_table.columns: formatters[currency_col] = "${:,.4f}";
                 if volume_col in df_display_table.columns: formatters[volume_col] = lambda x: f"${format_large_number(x)}";
                 for col in pct_cols:
                     if col in df_display_table.columns: formatters[col] = "{:+.2f}%"
-                for col in rsi_srsi_cols:
+                for col in rsi_srsi_cols: # Apply to RSI only now
                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
                 for col in macd_cols:
                     if col in df_display_table.columns: formatters[col] = "{:.4f}"
                 for col in ma_vwap_cols:
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
+                # Format SRSI K/D specifically
+                for col in srsi_value_cols:
+                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
+
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
 
-                # --- Updated Styling Function (v0.7) ---
                 def highlight_signal_style(val):
-                    """Styles signals including Heuristic Pred."""
                     style = 'color: #6c757d;'; font_weight = 'normal'
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
@@ -656,16 +619,55 @@ try:
                         elif "CTB" in val: style = 'color: #20c997;'
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
-                        elif "⬆️ Up" in val: style = 'color: #28a745;' # Green Up Arrow
-                        elif "⬇️ Down" in val: style = 'color: #dc3545;' # Red Down Arrow
-                        elif "➡️ Flat" in val: style = 'color: #6c757d;' # Grey Flat Arrow
-                        elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;' # Lighter grey for N/A
+                        elif "⬆️ Up" in val: style = 'color: #28a745;' # Green for Up
+                        elif "⬇️ Down" in val: style = 'color: #dc3545;' # Red for Down
+                        elif "➡️ Flat" in val: style = 'color: #6c757d;' # Grey for Flat
+                        elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
                     return f'{style} font-weight: {font_weight};'
+
                 def highlight_pct_col_style(val):
-                    """Colors percentage values green/red."""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
-                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'
-                    return f'color: {color};'
+                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
+
+                # --- NEW SRSI Styling Function (v0.8) ---
+                def style_stoch_rsi(row):
+                    k_col = "SRSI %K (1d)"
+                    d_col = "SRSI %D (1d)"
+                    # Default style for the row (applied to both K and D cols)
+                    default_style = ''
+                    style_k = default_style
+                    style_d = default_style
+
+                    # Check if both K and D values are present and numeric
+                    if k_col in row.index and d_col in row.index and pd.notna(row[k_col]) and pd.notna(row[d_col]):
+                        k_val = row[k_col]
+                        d_val = row[d_col]
+
+                        # Overbought condition (strongest)
+                        if k_val > SRSI_OB and d_val > SRSI_OB:
+                            style_str = 'color: red; font-weight: bold;' # Bold Red for Overbought
+                        # Oversold condition (strong)
+                        elif k_val < SRSI_OS and d_val < SRSI_OS:
+                            style_str = 'color: green; font-weight: bold;' # Bold Green for Oversold
+                        # Bullish crossover (not in extreme zones)
+                        elif k_val > d_val:
+                            style_str = 'color: #28a745;' # Lighter Green for Bullish Cross
+                        # Bearish crossover (not in extreme zones)
+                        elif k_val < d_val:
+                            style_str = 'color: #fd7e14;' # Orange/Light Red for Bearish Cross
+                        else:
+                             style_str = default_style # Neutral zone, no specific cross
+
+                        # Apply the determined style to both K and D for this row
+                        style_k = style_str
+                        style_d = style_str
+                    else: # Handle cases where K or D might be NaN
+                         style_k = default_style
+                         style_d = default_style
+
+                    # Return styles for all columns in the row (only K and D will have specific styles)
+                    return [style_k if col == k_col else style_d if col == d_col else default_style for col in row.index]
+
 
                 # Apply styles
                 cols_for_pct_style = [col for col in pct_cols if col in df_display_table.columns];
@@ -679,6 +681,12 @@ try:
                          logger.debug(f"Applying Signal style to column: {col}")
                          styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
 
+                # Apply SRSI row-wise styling
+                srsi_cols_exist = all(col in df_display_table.columns for col in srsi_value_cols)
+                if srsi_cols_exist:
+                     logger.debug("Applying SRSI row-wise styling.")
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
+
                 logger.info("Displaying styled table DataFrame."); st.dataframe(styled_table, use_container_width=True, column_config={"Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")})
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
@@ -687,24 +695,19 @@ try:
 
     # --- Chart Section ---
     st.divider(); st.subheader("💹 Detailed Coin Chart")
-    sel_col, price_col = st.columns([3, 1]) # Use columns for layout
+    sel_col, price_col = st.columns([3, 1])
     with sel_col:
         chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
 
-    # Display Current Price in the second column
     with price_col:
-        st.write("") # Add vertical space
-        st.write("")
+        st.write(""); st.write("") # Vertical space
         if chart_symbol:
             chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
             if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
                  latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
-                 if pd.notna(latest_price):
-                     st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
-                 else:
-                     st.caption(f"Current price N/A")
-            else:
-                 st.caption(f"Current price N/A")
+                 if pd.notna(latest_price): st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
+                 else: st.caption(f"Current price N/A")
+            else: st.caption(f"Current price N/A")
 
     chart_placeholder = st.empty()
     if chart_symbol:
@@ -721,88 +724,61 @@ try:
                     else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})")
         else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.")
 
-    # --- CoinCodex BTC Prediction Section (NEW v0.7) ---
-    st.divider()
-    st.subheader("⏳ CoinCodex BTC Prediction (Experimental)")
-    st.warning("""
-        **Disclaimer:** Predictions below are fetched from CoinCodex via an **unofficial endpoint** and are specific to **Bitcoin (BTC)** only.
-        This data is shown for informational purposes. The endpoint may become unavailable, and the predictions' accuracy is not guaranteed.
-        **Do not use this for financial decisions.**
-    """)
+    # --- CoinCodex Section Removed ---
 
-    cc_placeholder = st.empty()
-    with cc_placeholder:
-        with st.spinner("Fetching CoinCodex BTC prediction..."):
-             predictions, status = fetch_btc_coincodex_predictions()
-
-        if status == "Success" and predictions:
-             pred_cols = st.columns(3)
-             with pred_cols[0]:
-                 st.metric(label="BTC 5-Day Forecast", value=predictions.get("5_day_prediction", "N/A"))
-             with pred_cols[1]:
-                 st.metric(label="BTC 1-Month Forecast", value=predictions.get("1_month_prediction", "N/A"))
-             with pred_cols[2]:
-                 st.metric(label="BTC 3-Month Forecast", value=predictions.get("3_month_prediction", "N/A"))
-             st.caption("Data Source: [CoinCodex (Unofficial API)](https://coincodex.com/crypto/bitcoin/price-prediction/)")
-        else:
-             st.error(f"Could not fetch CoinCodex BTC predictions. Status: {status}")
-             logger.error(f"COINCODEX: Displaying error message for status: {status}")
-
-
-    # --- Legend (Improved v0.7) ---
+    # --- Legend (Improved v0.8 - SRSI Colors) ---
     st.divider();
     with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False):
         st.markdown("""
         *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
 
         **Market Overview:**
-        *   **Fear & Greed Index:** Crypto market sentiment index (0=Extreme Fear, 100=Extreme Greed). Low values suggest fear (potential opportunity), high values suggest greed (potential risk). Source: Alternative.me.
-        *   **Total Crypto M.Cap:** Total market capitalization ($) of all cryptocurrencies. Indicates the overall size of the crypto market. Source: CoinGecko.
-        *   **Crypto ETFs Flow:** Daily net capital flow ($) into spot crypto ETFs. Positive=Net Inflows, Negative=Net Outflows. **Data N/A in this version.**
-        *   **S&P 500 (SPY), etc.:** Price and daily change for traditional market benchmarks for macro comparison. Source: Alpha Vantage (**4h Cache**, delayed update).
+        *   **Fear & Greed Index:** Crypto market sentiment (0=Fear, 100=Greed). Low=Opportunity, High=Risk. Source: Alternative.me.
+        *   **Total Crypto M.Cap:** Total market capitalization ($). Source: CoinGecko.
+        *   **Crypto ETFs Flow:** Daily net capital flow ($) into spot crypto ETFs. **Data N/A.**
+        *   **S&P 500 (SPY), etc.:** Traditional market benchmarks. Source: Alpha Vantage (**4h Cache**).
 
         **Crypto Technical Analysis Table:**
-        *   **Rank:** Position by market capitalization (Source: CoinGecko).
-        *   **Gemini Alert / GPT Signal:** **Exemplary and experimental** signals generated automatically. **NOT trading recommendations.** Use with extreme caution and always Do Your Own Research (DYOR). Logic combines MA, MACD, RSI, VWAP. (See specific signal colors below).
-        *   **Heuristic Pred.:** **Simplistic / experimental** prediction based *only* on the price change over the last 3 days (default). **NOT AI, NOT reliable.** For illustrative purposes only. Uses +/- 1% threshold. (See specific signal colors below).
-        *   **Price:** Current price ($) (Source: CoinGecko).
-        *   **% 1h...1y:** Percentage price changes over timeframes (Source: CoinGecko). Color-coded Red/Green.
-        *   **RSI (1d, 1w, 1mo):** Relative Strength Index (Daily, Weekly, Monthly). Measures speed and strength of price movements. <30 suggests oversold (potential bounce), >70 suggests overbought (potential pullback). Comparing timeframes gives insight into short, medium, and long-term momentum.
-        *   **SRSI %K / %D (1d):** Stochastic RSI (Daily). More sensitive oscillator applied to RSI. %K < 20 suggests oversold, > 80 suggests overbought. %K crossing above %D is often seen as bullish, below as bearish, especially exiting extreme zones.
-        *   **MACD Hist (1d):** MACD Histogram (Daily). Measures momentum. Positive bars = Bullish momentum (strength indicated by height); Negative bars = Bearish momentum (strength indicated by depth). Crossing zero line can be significant.
-        *   **MA(20d) / MA(50d):** Simple Moving Averages (Daily). Trend lines. Price > MA = Bullish trend; Price < MA = Bearish trend. MA20 crossing above MA50 ('Golden Cross') is bullish; opposite ('Death Cross') is bearish. Useful for identifying trend direction and potential support/resistance.
-        *   **VWAP (1d):** Volume Weighted Average Price (Daily, 14 periods). Average price weighted by volume. Often seen as the 'fair price' for the period; Price > VWAP suggests strength (buyers in control), Price < VWAP suggests weakness (sellers in control).
-        *   **VWAP %:** Daily % change of the VWAP compared to the previous day. Indicates if the volume-weighted 'fair price' is trending up or down day-over-day. Color-coded Red/Green.
-        *   **Volume 24h:** Total traded volume ($) (Source: CoinGecko). High volume can confirm price moves.
-        *   **Link:** Direct link to the coin's page on CoinGecko.
-        *   **N/A:** Data not available (e.g., insufficient history, API error).
+        *   **Rank:** Market cap rank (CoinGecko).
+        *   **Gemini Alert / GPT Signal:** **Experimental** signals. **NOT trading advice.** (See colors below).
+        *   **Heuristic Pred.:** **Simplistic** prediction based on 3-day price change. **NOT AI, NOT reliable.** (See colors below).
+        *   **Price:** Current price ($) (CoinGecko).
+        *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive.
+        *   **RSI (1d, 1w, 1mo):** Relative Strength Index. Momentum oscillator. <30=Oversold, >70=Overbought (general levels).
+        *   **SRSI %K / %D (1d):** Stochastic RSI. More sensitive momentum oscillator (0-100).
+            *   Values <span style="color:green; font-weight:bold;">(Bold Green)</span>: Both K&D < 20 (Oversold).
+            *   Values <span style="color:red; font-weight:bold;">(Bold Red)</span>: Both K&D > 80 (Overbought).
+            *   Values <span style="color:#28a745;">(Green)</span>: K > D (Bullish crossover, not extreme).
+            *   Values <span style="color:#fd7e14;">(Orange)</span>: K < D (Bearish crossover, not extreme).
+            *   Values (Grey): Neutral zone or K=D.
+        *   **MACD Hist (1d):** MACD Histogram. Measures trend momentum and strength. Positive=Bullish, Negative=Bearish.
+        *   **MA(20d) / MA(50d):** Simple Moving Averages. Trend direction. Price vs MAs and MA crossovers (Golden/Death Cross) are key signals.
+        *   **VWAP (1d):** Volume Weighted Average Price. Price weighted by volume (14-day period). Price > VWAP = Potential strength; Price < VWAP = Potential weakness.
+        *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
+        *   **Volume 24h:** Trading volume ($) (CoinGecko).
+        *   **Link:** CoinGecko page link.
+        *   **N/A:** Data Not Available.
 
         **Signal Column Colors & Meanings:**
-        *   <span style="color:#198754; font-weight:bold;">⚡️ Strong Buy</span>: Multiple strong bullish technical confirmations.
-        *   <span style="color:#28a745;">🟢 Buy</span>: Generally bullish technical conditions.
-        *   <span style="color:#dc3545; font-weight:bold;">🚨 Strong Sell</span>: Multiple strong bearish technical confirmations.
-        *   <span style="color:#fd7e14;">🔴 Sell</span>: Generally bearish technical conditions.
-        *   <span style="color:#20c997;">⏳ CTB (Consider To Buy)</span>: Potentially bullish, monitor for confirmation.
-        *   <span style="color:#ffc107; color:#000;">⚠️ CTS (Consider To Sell)</span>: Potentially bearish, monitor for confirmation.
-        *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral or mixed technical conditions.
-        *   <span style="color:#28a745;">⬆️ Up (Heuristic)</span>: Price > +1% in last 3 days.
-        *   <span style="color:#dc3545;">⬇️ Down (Heuristic)</span>: Price < -1% in last 3 days.
-        *   <span style="color:#6c757d;">➡️ Flat (Heuristic)</span>: Price change within +/-1% in last 3 days.
-        *   <span style="color:#adb5bd;">⚪️ N/A</span>: Signal/Prediction could not be calculated.
+        *   <span style="color:#198754; font-weight:bold;">⚡️ Strong Buy</span> / <span style="color:#28a745;">🟢 Buy</span>: Bullish technical conditions.
+        *   <span style="color:#dc3545; font-weight:bold;">🚨 Strong Sell</span> / <span style="color:#fd7e14;">🔴 Sell</span>: Bearish technical conditions.
+        *   <span style="color:#20c997;">⏳ CTB</span>: Consider To Buy (Monitor).
+        *   <span style="color:#ffc107; color:#000;">⚠️ CTS</span>: Consider To Sell (Monitor).
+        *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral / Mixed conditions.
+        *   <span style="color:#28a745;">⬆️ Up (Heuristic)</span>: Recent price up (>+1%).
+        *   <span style="color:#dc3545;">⬇️ Down (Heuristic)</span>: Recent price down (<-1%).
+        *   <span style="color:#6c757d;">➡️ Flat (Heuristic)</span>: Recent price flat (+/-1%).
+        *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
 
         **Detailed Coin Chart:**
-        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d) for the selected coin for deeper visual analysis.
-
-        **CoinCodex BTC Prediction (Experimental):**
-        *   Shows short-term BTC price predictions (5d, 1m, 3m) fetched from CoinCodex via an **unofficial endpoint**.
-        *   **Highly experimental and potentially unreliable.** Use for informational purposes only.
+        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d).
 
         **Important Notes:**
-        *   Fetching historical data for the **table** from CoinGecko is **slowed down** (6s delay per coin) to respect free API limits. Initial app load may take several minutes.
-        *   Fetching data for the **chart** (selected coin only) uses a separate, shorter cache and has **no** 6s delay, so it should load faster after selection.
-        *   Traditional Market data (Alpha Vantage) has a **4-hour cache** due to strict free API limits.
-        *   **DYOR (Do Your Own Research):** Always conduct thorough research before making investment decisions. Past performance is not indicative of future results.
-        """, unsafe_allow_html=True) # Allow HTML for span styling
+        *   Table data fetch is slowed (6s/coin) due to API limits; initial load takes time.
+        *   Chart data fetch is faster (no delay per coin).
+        *   Traditional market data has **4h cache**.
+        *   **DYOR (Do Your Own Research):** Always conduct thorough research.
+        """, unsafe_allow_html=True)
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"Unexpected error: {main_exception}. Check the log.")
 
