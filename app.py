@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 3
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 4
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -473,13 +473,25 @@ logger.info("Inizio esecuzione UI principale.")
 try:
     if not check_password(): st.stop()
     logger.info("Password check superato.")
+
+    # --- TITOLO, BOTTONE REFRESH, TIMESTAMP ---
     col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
-    with col_title: st.title("📈 Crypto Technical Dashboard Pro")
-    with col_button: st.write("");
-                     if st.button("🔄 Aggiorna", help="Forza aggiornamento dati (cancella cache)", key="refresh_button"): logger.info("Bottone Aggiorna cliccato.");
-                                                                                                                           if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
-                                                                                                                           st.cache_data.clear(); st.query_params.clear(); st.rerun()
-    last_update_placeholder = st.empty(); st.caption(f"Cache: Live ({CACHE_TTL/60:.0f}m), Storico Tabella ({CACHE_HIST_TTL/60:.0f}m), Grafico ({CACHE_CHART_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).")
+    with col_title:
+        st.title("📈 Crypto Technical Dashboard Pro")
+    with col_button:
+        st.write("") # Spacer per allineare il bottone
+        # *** CORREZIONE INDENTAZIONE QUI ***
+        if st.button("🔄 Aggiorna", help="Forza aggiornamento dati (cancella cache)", key="refresh_button"):
+            logger.info("Bottone Aggiorna cliccato.")
+            if 'api_warning_shown' in st.session_state:
+                del st.session_state['api_warning_shown']
+            st.cache_data.clear()
+            st.query_params.clear()
+            st.rerun()
+
+    last_update_placeholder = st.empty()
+    st.caption(f"Cache: Live ({CACHE_TTL/60:.0f}m), Storico Tabella ({CACHE_HIST_TTL/60:.0f}m), Grafico ({CACHE_CHART_TTL/60:.0f}m), Tradizionale ({CACHE_TRAD_TTL/3600:.0f}h).")
+
 
     # --- SEZIONE MARKET OVERVIEW ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
