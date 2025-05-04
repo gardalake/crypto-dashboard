@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 6 (Main Block Indent)
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 7 (Styling Func)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -501,7 +501,7 @@ try:
             try: change_pct_val = float(change_pct_str.replace('%','').strip()); delta_string = f"{change_val:+.2f} ({change_pct_val:+.2f}%)"
             except (ValueError, AttributeError): delta_string = f"{change_val:+.2f} (?%)"
         elif pd.notna(change_val): delta_string = f"{change_val:+.2f}";
-        return delta_string # Moved return here
+        return delta_string
     def render_metric(column, label, value_func=None, ticker=None, data_dict=None, help_text=None):
         value_str = "N/A"; delta_txt = None; d_color = "off"
         if ticker and data_dict:
@@ -512,8 +512,8 @@ try:
             try: value_str = value_func(); value_str = str(value_str) if value_str is not None else "N/A"
             except Exception as e: logger.error(f"Errore value_func '{label}': {e}"); value_str = "Errore"
             delta_txt = None; d_color = "off"
-        else: value_str = "N/A"; # Removed metric call from here
-        column.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text) # Call metric once at the end
+        else: value_str = "N/A";
+        column.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text)
     overview_items_row1 = [ ("Fear & Greed Index", None, get_fear_greed_index, "Fonte: Alternative.me"), (f"Total Crypto M.Cap ({VS_CURRENCY.upper()})", None, lambda: f"${format_large_number(total_market_cap)}", "Fonte: CoinGecko"), ("Crypto ETFs Flow (Daily)", None, get_etf_flow, "Dato N/A"), ("S&P 500 (SPY)", "SPY", None, "Fonte: AV (ETF)"), ("Nasdaq (QQQ)", "QQQ", None, "Fonte: AV (ETF)") ]
     overview_cols_1 = st.columns(len(overview_items_row1));
     for i, (label, ticker, func, help_text) in enumerate(overview_items_row1): render_metric(overview_cols_1[i], label, value_func=func, ticker=ticker, data_dict=traditional_market_data, help_text=help_text)
@@ -530,26 +530,33 @@ try:
 
     # --- Gestione Timestamp (Corretto) ---
     if last_cg_update_utc:
-        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*"
+        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*" # Default message
         try:
             if ZoneInfo:
                 local_tz = ZoneInfo("Europe/Rome")
+                # Assicura che il timestamp sia timezone-aware (UTC) prima di convertire
                 if last_cg_update_utc.tzinfo is None:
                     logger.debug("Timestamp UTC non timezone-aware, aggiungo TZ UTC.")
                     last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
+
+                # Converti a fuso orario locale
                 last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***"
                 logger.info(f"Timestamp visualizzato: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else:
+
+            else: # Fallback se zoneinfo non è disponibile
                 logger.debug("ZoneInfo non disponibile, uso offset UTC+2 per Roma.")
                 offset_hours = 2
                 last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=offset_hours)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"
                 logger.info(f"Timestamp visualizzato (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
+
         except Exception as e:
             logger.exception("Errore durante formattazione/conversione timestamp:")
+            # Mostra errore e timestamp UTC grezzo se la conversione fallisce
             timestamp_display_str = f"*Errore conversione timestamp ({e}). Ora UTC: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*"
-        last_update_placeholder.markdown(timestamp_display_str)
+
+        last_update_placeholder.markdown(timestamp_display_str) # Display the final string
     else:
         logger.warning("Timestamp dati live CoinGecko non disponibile (last_cg_update_utc è None).")
         last_update_placeholder.markdown("*Timestamp dati live CoinGecko non disponibile.*")
@@ -559,8 +566,10 @@ try:
     # --- Verifica Dati Live (Corretto) ---
     if market_data_df.empty:
         msg = "Errore critico: Impossibile caricare dati live CoinGecko. Tabella analisi non generata."
+        # Check if the reason for failure might be the known API warning
         if st.session_state.get("api_warning_shown", False):
              msg = "Tabella Analisi Tecnica non generata: errore caricamento dati live (possibile limite API CoinGecko)."
+        # Log and display the appropriate error message
         logger.error(msg)
         st.error(msg)
         # Optionally stop execution: st.stop()
@@ -606,15 +615,33 @@ try:
                 for col in ma_vwap_cols:
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
+                # *** Funzione Stile Segnale CORRETTA ***
+                def highlight_signal_style(val):
+                    style = 'color: #6c757d;' # Grigio default
+                    font_weight = 'normal'
+                    if isinstance(val, str):
+                        if "Strong Buy" in val:
+                            style = 'color: #198754;'
+                            font_weight = 'bold'
+                        elif "Buy" in val and "Strong" not in val:
+                            style = 'color: #28a745;'
+                        elif "Strong Sell" in val:
+                            style = 'color: #dc3545;'
+                            font_weight = 'bold'
+                        elif "Sell" in val and "Strong" not in val:
+                            style = 'color: #fd7e14;'
+                        elif "CTB" in val:
+                            style = 'color: #20c997;'
+                        elif "CTS" in val:
+                            style = 'color: #ffc107; color: #000;' # Testo nero per leggibilità su giallo
+                        elif "Hold" in val:
+                            style = 'color: #6c757d;'
+                        elif "N/D" in val:
+                            style = 'color: #adb5bd;'
+                    return f'{style} font-weight: {font_weight};'
                 def highlight_pct_col_style(val):
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''; color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
-                def highlight_signal_style(val):
-                    style = 'color: #6c757d;'; font_weight = 'normal';
-                    if isinstance(val, str):
-                        if "Strong Buy" in val: style = 'color: #198754;'; font_weight = 'bold'; elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
-                        elif "Strong Sell" in val: style = 'color: #dc3545;'; font_weight = 'bold'; elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;'
-                        elif "CTB" in val: style = 'color: #20c997;'; elif "CTS" in val: style = 'color: #ffc107; color: #000;'; elif "Hold" in val: style = 'color: #6c757d;'; elif "N/D" in val: style = 'color: #adb5bd;'
-                    return f'{style} font-weight: {font_weight};'
+
                 cols_for_pct_style = [col for col in pct_cols if col in df_display_table.columns];
                 if cols_for_pct_style: styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
                 if "Gemini Alert" in df_display_table.columns: styled_table = styled_table.applymap(highlight_signal_style, subset=["Gemini Alert"])
