@@ -5,3 +5,4 @@ numpy
 alpha-vantage
 plotly
 pandas-ta
+setuptools
