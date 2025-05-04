@@ -1,4 +1,4 @@
-# Version: v1.1 (Reverted) - Refined Signals (MAs, BBands), Keep v0.8 fixes - Before Fire Icon & Formatting Issues
+# Version: v1.2 - Fix Styler Apply/Map Usage, Format after Style, Keep v1.1 features - Add FIRE_ICON_THRESHOLD back
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -54,7 +54,7 @@ SYMBOL_TO_ID_MAP = {
 SYMBOLS = list(SYMBOL_TO_ID_MAP.keys())
 COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
 NUM_COINS = len(SYMBOLS)
-# FIRE_ICON_THRESHOLD Removed for now
+FIRE_ICON_THRESHOLD = 8 # Number of coins needed green in 1h for fire icon
 logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = [
     'SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL',
@@ -626,7 +626,7 @@ try:
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
                 ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
-                df_display = table_results_df[cols_to_show].copy() # Use this df for styling
+                df_display = table_results_df[cols_to_show].copy()
 
                 # --- Styling Functions (v1.2 - Return CSS Strings) ---
                 def highlight_signal_style(val):
@@ -702,17 +702,16 @@ try:
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
                     return f"{icon}{val:+.2f}%"
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
-                for col in rsi_cols + srsi_value_cols: # Format RSI/SRSI
+                for col in rsi_cols + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = "{:.1f}"
-                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign
-                for col in ma_vwap_cols: # Format MAs/VWAP
+                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
+                for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
 
                 # --- Apply Styles THEN Formatting ---
-                styled_table = df_display.style # Start fresh with data
+                styled_table = df_display.style
 
-                # Apply styles using .map or .apply (these return CSS strings)
-                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns]
+                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
                 if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
 
                 signal_cols_to_style = ["MA/MACD Cross Alert", "Composite Score"]
@@ -727,7 +726,6 @@ try:
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     # Pass the *original* numeric df to the styling function for logic
                      styled_table = styled_table.apply(lambda row: style_stoch_rsi(table_results_df.loc[row.name]), axis=1, subset=srsi_value_cols) # Apply only to subset
 
                 # Apply formatting LAST
@@ -801,8 +799,8 @@ try:
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
         *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
         *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
-            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates value.
-            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates value.
+            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
+            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
             *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening.
         *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored.*
         *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
