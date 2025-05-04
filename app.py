@@ -1,8 +1,8 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 7 (Styling Func)
+# Versione: v0.6 - Add Heuristic Pred, Latest Price, Remove Error Expander, Improve Legend
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-# import pandas_ta as ta # <--- REMOVED pandas-ta
+# import pandas_ta as ta # Removed
 import requests
 import numpy as np
 from datetime import datetime, timedelta
@@ -20,13 +20,13 @@ import io
 log_stream = io.StringIO()
 logging.basicConfig(
     stream=log_stream,
-    level=logging.DEBUG, # Livello DEBUG
+    level=logging.INFO, # Set to INFO for production, DEBUG for development
     format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     force=True
 )
 logger = logging.getLogger(__name__)
-logger.info("Logging configurato per UI (Livello DEBUG).")
+logger.info("Logging configurato per UI.")
 # --- FINE: Configurazione Logging in UI ---
 
 # Import zoneinfo
@@ -80,6 +80,7 @@ MACD_SIGNAL = 9
 MA_SHORT = 20
 MA_LONG = 50
 VWAP_PERIOD = 14
+HEURISTIC_PRED_PERIOD = 3 # Days for simple price change prediction
 logger.info("Fine configurazione globale.")
 
 # --- DEFINIZIONI FUNZIONI ---
@@ -399,6 +400,38 @@ def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current
     elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold and is_price_below_vwap: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
+# --- NUOVA Funzione Predizione Euristica (v0.6) ---
+def generate_heuristic_prediction(hist_daily_df: pd.DataFrame, periods: int = HEURISTIC_PRED_PERIOD) -> str:
+    """Genera una previsione euristica basata sul cambiamento di prezzo negli ultimi 'periods' giorni."""
+    if hist_daily_df is None or not isinstance(hist_daily_df, pd.DataFrame) or hist_daily_df.empty or 'close' not in hist_daily_df.columns:
+        logger.warning("Pred Heur: Dati input non validi.")
+        return "⚪️ N/A" # Changed N/D to N/A
+    if len(hist_daily_df) < periods + 1:
+        logger.warning(f"Pred Heur: Dati insuff. ({len(hist_daily_df)}/{periods+1})")
+        return "⚪️ N/A" # Changed N/D to N/A
+    try:
+        # Usa pct_change sulla colonna 'close'
+        change = hist_daily_df['close'].pct_change(periods=periods).iloc[-1]
+        if pd.isna(change):
+            logger.warning(f"Pred Heur: Risultato pct_change è NaN.")
+            return "⚪️ N/A" # Changed N/D to N/A
+
+        # Definisci soglie (es. +/- 1%)
+        threshold = 0.01
+        if change > threshold:
+             return "⬆️ Up"
+        elif change < -threshold:
+             return "⬇️ Down"
+        else:
+             return "➡️ Flat"
+    except IndexError:
+         logger.warning(f"Pred Heur: Errore indice durante pct_change (probabilmente dati insuff. dopo pct_change).")
+         return "⚪️ N/A"
+    except Exception as e:
+        logger.exception(f"Pred Heur: Errore calcolo: {e}")
+        return "⚪️ N/A" # Changed N/D to N/A
+
+
 # --- NUOVE Funzioni Calcolo Indicatori per Grafico (v0.5) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calcola la SMA per l'intera serie."""
@@ -441,13 +474,12 @@ def create_coin_chart(df, symbol):
     # Calcola indicatori usando le nuove funzioni manuali sulla serie 'close'
     try:
         logger.debug(f"CHART: Calcolo indicatori manuali (SMA, RSI) per {symbol}.")
-        # Assicurati che 'close' non abbia NaN *prima* di passarlo alle funzioni
         close_series = df['close'].dropna()
         if close_series.empty: raise ValueError("Serie 'close' è vuota dopo dropna()")
 
-        df['MA_Short'] = calculate_sma_series(close_series, MA_SHORT).reindex(df.index) # Reindex per allineare
-        df['MA_Long'] = calculate_sma_series(close_series, MA_LONG).reindex(df.index)   # Reindex per allineare
-        df['RSI'] = calculate_rsi_series(close_series, RSI_PERIOD).reindex(df.index)     # Reindex per allineare
+        df['MA_Short'] = calculate_sma_series(close_series, MA_SHORT).reindex(df.index)
+        df['MA_Long'] = calculate_sma_series(close_series, MA_LONG).reindex(df.index)
+        df['RSI'] = calculate_rsi_series(close_series, RSI_PERIOD).reindex(df.index)
         logger.debug(f"CHART: Colonne dopo calcoli manuali: {df.columns.tolist()}")
     except Exception as calc_err:
         logger.exception(f"CHART: Errore durante calcolo indicatori manuali per {symbol}:")
@@ -530,33 +562,26 @@ try:
 
     # --- Gestione Timestamp (Corretto) ---
     if last_cg_update_utc:
-        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*" # Default message
+        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*"
         try:
             if ZoneInfo:
                 local_tz = ZoneInfo("Europe/Rome")
-                # Assicura che il timestamp sia timezone-aware (UTC) prima di convertire
                 if last_cg_update_utc.tzinfo is None:
                     logger.debug("Timestamp UTC non timezone-aware, aggiungo TZ UTC.")
                     last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
-
-                # Converti a fuso orario locale
                 last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***"
                 logger.info(f"Timestamp visualizzato: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            else: # Fallback se zoneinfo non è disponibile
+            else:
                 logger.debug("ZoneInfo non disponibile, uso offset UTC+2 per Roma.")
                 offset_hours = 2
                 last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=offset_hours)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"
                 logger.info(f"Timestamp visualizzato (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
-
         except Exception as e:
             logger.exception("Errore durante formattazione/conversione timestamp:")
-            # Mostra errore e timestamp UTC grezzo se la conversione fallisce
             timestamp_display_str = f"*Errore conversione timestamp ({e}). Ora UTC: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*"
-
-        last_update_placeholder.markdown(timestamp_display_str) # Display the final string
+        last_update_placeholder.markdown(timestamp_display_str)
     else:
         logger.warning("Timestamp dati live CoinGecko non disponibile (last_cg_update_utc è None).")
         last_update_placeholder.markdown("*Timestamp dati live CoinGecko non disponibile.*")
@@ -572,7 +597,7 @@ try:
         # Log and display the appropriate error message
         logger.error(msg)
         st.error(msg)
-        # Optionally stop execution: st.stop()
+        # Optionally stop execution: st.stop() # Decide if the app should stop if table fails
     else:
         # --- Elaborazione Tabella (se dati live OK) ---
         logger.info(f"Dati live CoinGecko OK ({len(market_data_df)} righe), inizio ciclo elaborazione tabella."); results = []; fetch_errors_for_display = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
@@ -587,21 +612,44 @@ try:
                     live_data = market_data_df.loc[coin_id]; name = live_data.get('name', coin_id); rank = live_data.get('market_cap_rank', 'N/A'); current_price = live_data.get('current_price', np.nan); volume_24h = live_data.get('total_volume', np.nan)
                     change_1h=live_data.get('price_change_percentage_1h_in_currency',np.nan); change_24h=live_data.get('price_change_percentage_24h_in_currency',np.nan); change_7d=live_data.get('price_change_percentage_7d_in_currency',np.nan); change_30d=live_data.get('price_change_percentage_30d_in_currency',np.nan); change_1y=live_data.get('price_change_percentage_1y_in_currency',np.nan)
                     hist_daily_df_table, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
-                    if status_daily != "Success": fetch_errors_for_display.append(f"{symbol}: Storico Daily (Tabella) - {status_daily}"); logger.warning(f"{symbol}: Impossibile calcolare indicatori tabella."); indicators = {}; gpt_signal = "⚪️ N/D"; gemini_alert = "⚪️ N/D"
+
+                    # Initialize indicators and signals to default values
+                    indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A"; heuristic_pred = "⚪️ N/A"
+
+                    if status_daily != "Success":
+                        fetch_errors_for_display.append(f"{symbol}: Storico Daily (Tabella) - {status_daily}");
+                        logger.warning(f"{symbol}: Impossibile calcolare indicatori/segnali tabella.")
                     else:
                         indicators = compute_all_indicators(symbol, hist_daily_df_table)
                         gpt_signal = generate_gpt_signal( indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("VWAP (1d)"), current_price)
                         gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
+                        heuristic_pred = generate_heuristic_prediction(hist_daily_df_table) # Calculate heuristic prediction
+
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
-                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal, f"Prezzo ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP % Change (1d)": indicators.get("VWAP % Change (1d)"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
+                    results.append({
+                        "Rank": rank, "Symbol": symbol, "Name": name,
+                        "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal, "Heuristic Pred.": heuristic_pred, # Added heuristic prediction
+                        f"Prezzo ({VS_CURRENCY.upper()})": current_price,
+                        "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,
+                        "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),
+                        "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),
+                        "MACD Hist (1d)": indicators.get("MACD Hist (1d)"),
+                        f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),
+                        "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP % Change (1d)": indicators.get("VWAP % Change (1d)"),
+                        f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
+                        "Link": coingecko_link
+                    })
                     logger.info(f"--- Elaborazione Tabella {symbol} completata. ---"); actual_processed_count += 1
                 except Exception as coin_err: err_msg = f"Errore grave elaborazione tabella {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Errore Grave Tabella - Vedi Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Fine ciclo tabella crypto. Processate {actual_processed_count}/{effective_num_coins}. Tempo: {total_time:.1f} sec"); st.sidebar.info(f"Tempo elab. Tabella: {total_time:.1f} sec")
+
+        # --- Visualizzazione Tabella ---
         if results:
             logger.info(f"Creazione DataFrame tabella con {len(results)} risultati.");
             try:
                 table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
-                cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", f"Prezzo ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP % Change (1d)", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
+                # *** Aggiunta Colonna Heuristic Pred. ***
+                cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", "Heuristic Pred.", f"Prezzo ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP % Change (1d)", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
                 formatters = {}; currency_col = f"Prezzo ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP % Change (1d)"]; rsi_srsi_cols = [c for c in df_display_table.columns if ("RSI" in c or "SRSI" in c)]; macd_cols = [c for c in df_display_table.columns if "MACD" in c]; ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
                 if currency_col in df_display_table.columns: formatters[currency_col] = "${:,.4f}";
@@ -615,7 +663,8 @@ try:
                 for col in ma_vwap_cols:
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
-                # *** Funzione Stile Segnale CORRETTA ***
+
+                # --- Funzione Stile Segnale CORRETTA ---
                 def highlight_signal_style(val):
                     style = 'color: #6c757d;' # Grigio default
                     font_weight = 'normal'
@@ -633,36 +682,55 @@ try:
                         elif "CTB" in val:
                             style = 'color: #20c997;'
                         elif "CTS" in val:
-                            style = 'color: #ffc107; color: #000;' # Testo nero per leggibilità su giallo
+                            style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val:
                             style = 'color: #6c757d;'
-                        elif "N/D" in val:
+                        elif "N/A" in val: # Check for N/A as well as N/D
                             style = 'color: #adb5bd;'
+                        # No specific style needed for Heuristic Pred icons (⬆️/➡️/⬇️) beyond default
                     return f'{style} font-weight: {font_weight};'
+
                 def highlight_pct_col_style(val):
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''; color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 cols_for_pct_style = [col for col in pct_cols if col in df_display_table.columns];
                 if cols_for_pct_style: styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
-                if "Gemini Alert" in df_display_table.columns: styled_table = styled_table.applymap(highlight_signal_style, subset=["Gemini Alert"])
-                if "GPT Signal" in df_display_table.columns: styled_table = styled_table.applymap(highlight_signal_style, subset=["GPT Signal"])
+                # Apply signal style to Gemini and GPT columns
+                signal_cols_to_style = ["Gemini Alert", "GPT Signal"]
+                for col in signal_cols_to_style:
+                     if col in df_display_table.columns:
+                         styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
+
                 logger.info("Visualizzazione DataFrame tabella."); st.dataframe(styled_table, use_container_width=True, column_config={"Link": st.column_config.LinkColumn("CoinGecko", help="Link CoinGecko", display_text="🔗 Link", width="small")})
             except Exception as df_err: logger.exception("Errore creazione/styling DataFrame tabella:"); st.error(f"Errore visualizzazione tabella: {df_err}")
         else: logger.warning("Nessun risultato tabella valido da visualizzare."); st.warning("Nessun risultato crypto valido da visualizzare nella tabella.")
-        fetch_errors_unique_display = sorted(list(set(fetch_errors_for_display)));
-        if fetch_errors_unique_display:
-            with st.expander("❗️ Errori Elaborazione Dati Tabella", expanded=False):
-                st.warning("Alcune coin non elaborate correttamente per la tabella."); max_errors_to_show = 30; error_list_md = "";
-                for i, error_msg in enumerate(fetch_errors_unique_display):
-                    if i < max_errors_to_show: error_list_md += f"- {error_msg}\n"
-                    elif i == max_errors_to_show: error_list_md += f"- ... e altri {len(fetch_errors_unique_display) - max_errors_to_show} errori.\n"; break
-                st.markdown(error_list_md); st.info("Controlla Log Applicazione per dettagli errori 'Gravi'.")
 
-    # --- SEZIONE GRAFICO (Modificata v0.5) ---
+        # --- EXPANDER ERRORI RIMOSSO (v0.6) ---
+        # fetch_errors_unique_display = sorted(list(set(fetch_errors_for_display)));
+        # if fetch_errors_unique_display:
+        #     with st.expander("❗️ Errori Elaborazione Dati Tabella", expanded=False):
+        #         # ... (codice rimosso) ...
+
+    # --- SEZIONE GRAFICO ---
     st.divider(); st.subheader("💹 Grafico Dettaglio Coin")
-    chart_symbol = st.selectbox("Seleziona una coin:", options=SYMBOLS, index=0, key="chart_coin_selector"); chart_placeholder = st.empty()
+    chart_symbol = st.selectbox("Seleziona una coin:", options=SYMBOLS, index=0, key="chart_coin_selector")
+
+    # --- Visualizza Prezzo Corrente per Coin Selezionata (Nuovo v0.6) ---
     if chart_symbol:
         chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
+        if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
+             latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
+             if pd.notna(latest_price):
+                 st.metric(label=f"Prezzo Corrente {chart_symbol}", value=f"${latest_price:,.4f}")
+             else:
+                 st.caption(f"Prezzo corrente per {chart_symbol} non disponibile.")
+        elif chart_coin_id: # Handle case where market data is empty but ID exists
+             st.caption(f"Prezzo corrente per {chart_symbol} non disponibile (dati live mancanti).")
+
+
+    chart_placeholder = st.empty() # Placeholder per grafico/messaggi
+    if chart_symbol:
+        # chart_coin_id è già definito sopra
         if chart_coin_id:
             logger.info(f"CHART: Tentativo caricamento dati per grafico {chart_symbol} ({chart_coin_id}).")
             with chart_placeholder:
@@ -675,26 +743,57 @@ try:
                     else: logger.error(f"CHART: Fallito caricamento dati storici per {chart_symbol}. Status: {chart_status}"); st.error(f"Impossibile caricare dati storici per grafico di {chart_symbol}. ({chart_status})")
         else: st.error(f"ID CoinGecko non trovato per {chart_symbol}."); logger.error(f"CHART: ID CoinGecko non trovato per {chart_symbol} in mappa.")
 
-    # --- LEGENDA ---
+    # --- LEGENDA (Migliorata v0.6) ---
     st.divider();
-    with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False):
+    with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=True): # Default a expanded
         st.markdown("""
         *Disclaimer: Questa dashboard è fornita solo a scopo informativo e didattico e non costituisce in alcun modo consulenza finanziaria.*
-        **(Vedi sezioni precedenti per Market Overview e Tabella Analisi Tecnica)**
+
+        **Market Overview:**
+        *   **Fear & Greed Index:** Indice del sentiment di mercato crypto (Fonte: Alternative.me). Valori bassi (<30-40) indicano paura (potenziale bottoming/opportunità), valori alti (>60-70) indicano avidità (potenziale topping/rischio).
+        *   **Total Crypto M.Cap:** Capitalizzazione di mercato totale ($) di tutte le criptovalute (Fonte: CoinGecko). Misura la dimensione generale del mercato crypto.
+        *   **Crypto ETFs Flow:** Flusso netto giornaliero di capitale negli ETF crypto spot (es. Bitcoin). Valore positivo indica afflussi netti, negativo deflussi netti. **Dato attualmente N/A (Non Applicabile/Non Disponibile) in questa versione.**
+        *   **S&P 500 (SPY), Nasdaq (QQQ), etc.:** Prezzi e variazioni giornaliere di indici/asset tradizionali per confronto macro. Fonte: Alpha Vantage. **Aggiornati con ritardo (cache 4h)** a causa dei limiti API free.
+
+        **Tabella Analisi Tecnica Crypto:**
+        *   **Rank:** Posizione per capitalizzazione di mercato (Fonte: CoinGecko).
+        *   **Gemini Alert / GPT Signal:** Segnali **esemplificativi e sperimentali** generati automaticamente. **NON sono raccomandazioni di trading.** Usare con estrema cautela e fare sempre le proprie ricerche (DYOR). La logica combina diversi indicatori (MA, MACD, RSI, VWAP).
+            *   ⚡️ Strong Buy / 🟢 Buy: Condizioni tecniche aggregate potenzialmente rialziste.
+            *   🚨 Strong Sell / 🔴 Sell: Condizioni tecniche aggregate potenzialmente ribassiste.
+            *   🟡 Hold: Condizioni neutre o miste.
+            *   ⏳ CTB (Consider To Buy): Tendenza potenzialmente rialzista, ma richiede conferma/monitoraggio.
+            *   ⚠️ CTS (Consider To Sell): Tendenza potenzialmente ribassista, ma richiede conferma/monitoraggio.
+            *   ⚪️ N/A: Segnale non disponibile (dati insufficienti).
+        *   **Heuristic Pred.:** Previsione **altamente sperimentale e semplicistica** basata solo sul cambiamento percentuale del prezzo negli ultimi 3 giorni. **NON è AI e NON è affidabile.** Serve solo come esempio.
+            *   ⬆️ Up: Prezzo aumentato >1% negli ultimi 3gg.
+            *   ⬇️ Down: Prezzo diminuito >1% negli ultimi 3gg.
+            *   ➡️ Flat: Variazione prezzo tra -1% e +1% negli ultimi 3gg.
+            *   ⚪️ N/A: Non calcolabile.
+        *   **Prezzo:** Prezzo corrente ($) (Fonte: CoinGecko).
+        *   **% 1h, 24h, 7d, 30d, 1y:** Variazioni percentuali del prezzo (Fonte: CoinGecko).
+        *   **RSI (1d, 1w, 1mo):** Relative Strength Index (Daily, Weekly, Monthly). Misura la forza e velocità dei movimenti di prezzo. Valori < 30 indicano ipervenduto (possibile rimbalzo), > 70 ipercomprato (possibile ritracciamento). L'uso su timeframe diversi (1d, 1w, 1mo) aiuta a capire il momentum a breve, medio e lungo termine.
+        *   **SRSI %K / %D (1d):** Stochastic RSI (Daily). Oscillatore più sensibile applicato all'RSI. %K < 20 ipervenduto, > 80 ipercomprato. Il crossover di %K sopra %D è spesso visto come segnale rialzista, sotto %D ribassista (specialmente uscendo dalle zone estreme).
+        *   **MACD Hist (1d):** Moving Average Convergence Divergence Histogram (Daily). Misura il momentum. Barre positive (sopra zero) indicano momentum rialzista crescente o decrescente; barre negative (sotto zero) indicano momentum ribassista crescente o decrescente. L'altezza/profondità delle barre indica la forza del momentum.
+        *   **MA(20d) / MA(50d):** Medie Mobili Semplici (Daily). Linee di trend. Prezzo > MA = tendenza rialzista; Prezzo < MA = tendenza ribassista. L'incrocio della MA corta (20d) sopra la MA lunga (50d) è detto 'Golden Cross' (segnale rialzista); l'incrocio opposto è 'Death Cross' (segnale ribassista).
+        *   **VWAP (1d):** Volume Weighted Average Price (calcolato su 14 periodi giornalieri). Prezzo medio ponderato per il volume. Spesso visto come 'prezzo equo' della giornata; trader guardano se il prezzo è sopra (bullish bias) o sotto (bearish bias) il VWAP.
+        *   **VWAP % Change (1d):** Variazione percentuale del VWAP giornaliero rispetto al giorno precedente. Indica se il 'prezzo equo ponderato' sta salendo o scendendo giorno su giorno.
+        *   **Volume 24h:** Volume totale scambiato ($) (Fonte: CoinGecko).
+        *   **Link:** Collegamento a CoinGecko.
+        *   **N/A:** Dato non disponibile.
+
         **Grafico Dettaglio Coin:**
-        *   **Candlestick:** Rappresentazione standard del prezzo (Apertura, Massimo, Minimo, Chiusura) giornaliero. *Nota: OHLC sono approssimati da CoinGecko Daily.*
-        *   **MA(20d) / MA(50d):** Medie Mobili Semplici calcolate sull'intero periodo visualizzato.
-        *   **RSI (14d):** Relative Strength Index calcolato sull'intero periodo. Linee 70 (ipercomprato) e 30 (ipervenduto).
+        *   Visualizza l'andamento storico giornaliero (candele), le Medie Mobili (20d, 50d) e l'RSI (14d) per la coin selezionata. Permette un'analisi visiva più approfondita.
+
         **Note Importanti:**
-        *   Recupero dati storici per **tabella** da CoinGecko **rallentato** (6s/coin). Caricamento iniziale richiede tempo.
-        *   Recupero dati per **grafico** (solo coin selezionata) usa cache separata e **non** ha pausa di 6s.
-        *   Dati Mercati Tradizionali (Alpha Vantage) **cache 4h**.
-        *   **DYOR (Do Your Own Research).**
+        *   Recupero dati per **tabella** rallentato (6s/coin). Caricamento iniziale richiede tempo.
+        *   Recupero dati per **grafico** è più veloce (nessuna pausa).
+        *   Dati Mercati Tradizionali **cache 4h**.
+        *   **DYOR (Do Your Own Research):** Fai sempre le tue ricerche.
         """)
     st.divider(); st.caption("Disclaimer: Strumento informativo/didattico. Non consulenza finanziaria. DYOR.")
 except Exception as main_exception: logger.exception("!!! ERRORE NON GESTITO NELL'ESECUZIONE PRINCIPALE !!!"); st.error(f"Errore imprevisto: {main_exception}. Controlla il log.")
 
 # --- VISUALIZZAZIONE LOG APPLICAZIONE ---
-st.divider(); st.subheader("📄 Log Applicazione"); st.caption("Log generati durante l'ultima esecuzione (Livello DEBUG). Utile per debug.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=400, key="log_display_area", help="Seleziona (Ctrl+A) e copia (Ctrl+C) per analisi/condivisione.")
+st.divider(); st.subheader("📄 Log Applicazione"); st.caption("Log generati durante l'ultima esecuzione (INFO Level). Utile per monitoraggio.")
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area", help="Seleziona (Ctrl+A) e copia (Ctrl+C) per analisi/condivisione.")
 logger.info("--- Fine esecuzione script Streamlit app.py ---"); log_stream.close()
