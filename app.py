@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Formatting Error, Use Styler.map, Keep v1.1 features
+# Version: v1.2 - Fix Styler Apply/Map Usage, Keep v1.1 features
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -249,7 +249,6 @@ def get_traditional_market_data_av(tickers):
 
 # --- Indicator Calculation Functions (Manual for Table) ---
 def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD) -> float:
-    """Calculates the last RSI value manually."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
     series = series.dropna();
     if len(series) < period + 1: return np.nan
@@ -263,7 +262,6 @@ def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD) -> float:
     return max(0.0, min(100.0, rsi))
 
 def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_period: int = SRSI_PERIOD, k_smooth: int = SRSI_K, d_smooth: int = SRSI_D) -> tuple[float, float]:
-    """Calculates the last %K and %D values of StochRSI."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan
     series = series.dropna();
     if len(series) < rsi_period + stoch_period + max(k_smooth, d_smooth) -1 : return np.nan, np.nan
@@ -282,7 +280,6 @@ def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_p
     return k_final, d_final
 
 def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL) -> tuple[float, float, float]:
-    """Calculates the last MACD Line, Signal Line, and Histogram values."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan
     series = series.dropna();
     if len(series) < slow + signal - 1: return np.nan, np.nan, np.nan
@@ -294,14 +291,12 @@ def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = 
     return last_macd, last_signal, last_hist
 
 def calculate_sma_manual(series: pd.Series, period: int) -> float:
-    """Calculates the last Simple Moving Average (SMA) value."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
     series = series.dropna();
     if len(series) < period: return np.nan
     return series.rolling(window=period, min_periods=period).mean().iloc[-1]
 
 def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> float:
-    """Calculates the VWAP for a DataFrame slice."""
     required_cols = ['close', 'volume'];
     if not isinstance(df_slice, pd.DataFrame) or df_slice.empty or not all(col in df_slice.columns for col in required_cols): return np.nan
     df_valid_slice = df_slice[required_cols].dropna();
@@ -441,7 +436,6 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     if is_ma_cross_bullish and is_momentum_positive and is_price_confirm_bullish and is_rsi_ok_bullish: return "⚡️ Strong Buy"
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
-
 
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
@@ -585,7 +579,7 @@ try:
         # --- Process Table ---
         logger.info(f"Live CoinGecko data OK ({len(market_data_df)} rows), starting table processing loop."); results = []; fetch_errors_for_display = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
         if effective_num_coins != NUM_COINS: logger.warning(f"Coin count from API ({effective_num_coins}) != configured ({NUM_COINS}). Processing {effective_num_coins}.")
-        show_fire_icon = (market_data_df['price_change_percentage_1h_in_currency'].dropna() > 0).sum() >= FIRE_ICON_THRESHOLD # Handle potential NaN
+        show_fire_icon = (market_data_df['price_change_percentage_1h_in_currency'].dropna() > 0).sum() >= FIRE_ICON_THRESHOLD
         logger.info(f"Show fire icon condition met: {show_fire_icon}")
 
         spinner_msg = f"Fetching history and calculating table indicators for {effective_num_coins} crypto... (~{(effective_num_coins * 6.0 / 60):.1f} min)"
@@ -599,7 +593,7 @@ try:
                     change_1h=live_data.get('price_change_percentage_1h_in_currency',np.nan); change_24h=live_data.get('price_change_percentage_24h_in_currency',np.nan); change_7d=live_data.get('price_change_percentage_7d_in_currency',np.nan); change_30d=live_data.get('price_change_percentage_30d_in_currency',np.nan); change_1y=live_data.get('price_change_percentage_1y_in_currency',np.nan)
                     hist_daily_df_table, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
 
-                    indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A"; # Removed heuristic
+                    indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A";
                     if status_daily != "Success":
                         fetch_errors_for_display.append(f"{symbol}: Daily History (Table) - {status_daily}");
                         logger.warning(f"{symbol}: Could not calculate table indicators/signals.")
@@ -609,7 +603,20 @@ try:
                         gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
 
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
-                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
+                    results.append({
+                        "Rank": rank, "Symbol": symbol, "Name": name,
+                        "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, # Renamed signals
+                        f"Price ({VS_CURRENCY.upper()})": current_price,
+                        "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,
+                        "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),
+                        "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),
+                        "MACD Hist (1d)": indicators.get("MACD Hist (1d)"),
+                        f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),
+                        "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"),
+                        "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"),
+                        f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
+                        "Link": coingecko_link
+                    })
                     logger.info(f"--- Table processing for {symbol} completed. ---"); actual_processed_count += 1
                 except Exception as coin_err: err_msg = f"Critical error processing table for {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Critical Table Error - See Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Finished crypto table loop. Processed {actual_processed_count}/{effective_num_coins} coins. Time: {total_time:.1f} sec"); st.sidebar.info(f"Table Processing Time: {total_time:.1f} sec")
@@ -632,10 +639,10 @@ try:
                 ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
 
-                # --- Styling Functions (v1.2 - Format within Style) ---
+                # --- Styling Functions (v1.2) ---
                 def highlight_signal_style(val):
                     """Styles signals"""
-                    style = 'color: #6c757d;'; font_weight = 'normal'; text=str(val) # Default grey, ensure string
+                    style = 'color: #6c757d;'; font_weight = 'normal'; text=str(val)
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
                         elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
@@ -645,7 +652,7 @@ try:
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): text = "N/A"; style = 'color: #adb5bd;' # Handle NaN
+                    elif pd.isna(val): text = "N/A"; style = 'color: #adb5bd;'
                     return f'<span style="{style} font-weight: {font_weight};">{text}</span>'
 
                 def highlight_pct_col_style_and_format(val, add_icon=False):
@@ -673,43 +680,40 @@ try:
                     return f'<span style="color: {color};">{formatted_val}</span>'
 
                 def style_stoch_rsi(row):
-                    """Applies row-wise style to SRSI cols, formats numbers."""
+                    """Applies row-wise style to SRSI cols, expects formatted strings already in row."""
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
-                    k_text = "N/A"; d_text = "N/A" # Defaults
+                    k_text = row[k_col] if k_col in row.index else "N/A"
+                    d_text = row[d_col] if d_col in row.index else "N/A"
 
-                    if k_col in row.index and pd.notna(row[k_col]):
-                         k_val = row[k_col]; k_text = f"{k_val:.1f}"
-                    if d_col in row.index and pd.notna(row[d_col]):
-                         d_val = row[d_col]; d_text = f"{d_val:.1f}"
+                    # Access original numeric data for comparison logic
+                    k_val_num = table_results_df.loc[row.name, k_col] if k_col in table_results_df.columns else np.nan
+                    d_val_num = table_results_df.loc[row.name, d_col] if d_col in table_results_df.columns else np.nan
 
-                    # Determine shared style based on numeric values if both exist
-                    if pd.notna(k_val) and pd.notna(d_val):
-                        if k_val > SRSI_OB and d_val > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
-                        elif k_val < SRSI_OS and d_val < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
-                        elif k_val > d_val: style_str = 'color: #28a745;'
-                        elif k_val < d_val: style_str = 'color: #fd7e14;'
+                    if pd.notna(k_val_num) and pd.notna(d_val_num):
+                        if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
+                        elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
+                        elif k_val_num > d_val_num: style_str = 'color: #28a745;'
+                        elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    # Return styled HTML strings for the row
+                    # Return styled HTML strings for the row, preserving existing text
                     return [f'<span style="{style_k}">{k_text}</span>' if col == k_col else
                             f'<span style="{style_d}">{d_text}</span>' if col == d_col else
-                            row[col] # Return original value for other columns
+                            row[col] # Return original (potentially styled) value for other columns
                             for col in row.index]
 
                 # --- Apply Formatting and Styles using .map and .apply ---
-                # Define columns for each style/format type
+                df_styled_display = df_display_table.astype(str) # Start with strings
+
+                # Apply formatting/styling with .map where possible
                 signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
                 pct_cols_no_1h = ["% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
                 rsi_cols = [c for c in df_display_table.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
-                srsi_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
                 macd_hist_col = ["MACD Hist (1d)"]
+                srsi_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
 
-                # Create a final dataframe to apply styles (to avoid modifying original data types)
-                df_styled_display = df_display_table.astype(str) # Convert all to string initially
-
-                # Apply styles that return HTML strings using .map
                 for col in signal_cols:
                     if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].map(highlight_signal_style)
                 for col in pct_cols_no_1h:
@@ -719,45 +723,37 @@ try:
                      if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].map(style_and_format_rsi)
                 if macd_hist_col[0] in df_styled_display.columns: df_styled_display[macd_hist_col[0]] = df_display_table[macd_hist_col[0]].map(style_and_format_macd_hist)
 
-                # Apply row-wise styling for SRSI (this expects apply function to return a Series/list of styles per row for specified subset)
-                # First, format SRSI values numerically if they exist
+                # Format SRSI values first (needed for row-wise apply)
                 for col in srsi_cols:
-                     if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
-                # Then apply the color styling (which returns CSS strings)
+                     if col in df_styled_display.columns:
+                         df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+
+                # Apply row-wise styling for SRSI (without subset)
                 srsi_cols_exist = all(col in df_display_table.columns for col in srsi_cols)
                 if srsi_cols_exist:
-                    # Apply the styling function which returns CSS properties
-                    srsi_styles = df_display_table.apply(style_stoch_rsi, axis=1, subset=srsi_cols)
-                    # Combine the CSS style with the already formatted text
-                    for col in srsi_cols:
-                         df_styled_display[col] = srsi_styles[col].combine(df_styled_display[col], lambda style, text: f'<span style="{style}">{text}</span>')
+                     logger.debug("Applying SRSI row-wise styling.")
+                     # Apply the styling function to the df with formatted strings
+                     df_styled_display = df_styled_display.apply(style_stoch_rsi, axis=1)
 
-                # Apply basic numeric formatting for remaining columns
-                num_cols_to_format = ma_vwap_cols + [currency_col] + [volume_col]
-                for col in num_cols_to_format:
+                # Format remaining numeric columns
+                num_cols_to_format = [c for c in df_display_table.columns if c not in df_styled_display.columns or df_styled_display[c].equals(df_display_table[c].astype(str))] # Format only if not already handled
+                ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+                currency_col = f"Price ({VS_CURRENCY.upper()})"
+                volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+
+                for col in ma_vwap_cols + [currency_col] + [volume_col]:
                      if col in df_styled_display.columns:
-                         if col == volume_col:
-                             df_styled_display[col] = df_display_table[col].apply(lambda x: format_large_number(x) if pd.notna(x) else "N/A")
-                         elif col == currency_col:
-                              df_styled_display[col] = df_display_table[col].apply(lambda x: f"${x:,.4f}" if pd.notna(x) else "N/A")
-                         else: # MAs, VWAP(1d)
-                             df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A")
+                         if col == volume_col: df_styled_display[col] = df_display_table[col].apply(lambda x: format_large_number(x) if pd.notna(x) else "N/A")
+                         elif col == currency_col: df_styled_display[col] = df_display_table[col].apply(lambda x: f"${x:,.4f}" if pd.notna(x) else "N/A")
+                         else: df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A")
 
                 # Handle Link separately
-                if "Link" in df_styled_display.columns:
-                     df_styled_display["Link"] = df_display_table["Link"] # Keep original link
+                if "Link" in df_styled_display.columns: df_styled_display["Link"] = df_display_table["Link"]
 
                 # Display the HTML rendered DataFrame
                 logger.info("Displaying styled table DataFrame.");
                 st.markdown(df_styled_display.to_html(escape=False, index=True), unsafe_allow_html=True)
-                # Using markdown with to_html instead of st.dataframe for better style control compatibility
-                # st.dataframe(df_styled_display, # Using st.dataframe loses some custom HTML styling
-                #              use_container_width=True,
-                #              column_config={
-                #                  "MA/MACD Cross Alert": st.column_config.TextColumn(label="MA/MACD\nCross Alert", width="small"),
-                #                  "Composite Score": st.column_config.TextColumn(label="Composite\nScore", width="small"),
-                #                  "Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")
-                #              })
+
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
         # --- Error Expander Removed ---
@@ -801,12 +797,12 @@ try:
 
         **Crypto Technical Analysis Table:**
         *   **Rank:** Market cap rank (CoinGecko).
-        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** (See colors below). Signal logic refined in v1.1.
+        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** Signal logic refined in v1.1 using MAs(7/20/50), MACD, RSI(1d/1w), SRSI, BBands, VWAP. (See colors below).
         *   **Price:** Current price ($) (CoinGecko).
         *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive. 🔥 Icon on % 1h indicates market breadth (>=8 coins positive).
         *   **RSI (1d, 1w, 1mo):** Relative Strength Index (0-100).
-            *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought (Potential Pullback).
-            *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold (Potential Bounce).
+            *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought.
+            *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold.
         *   **SRSI %K / %D (1d):** Stochastic RSI (0-100).
             *   <span style="color:#198754; font-weight:bold;">Values (Bold Green)</span>: Oversold (K&D < 20).
             *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Overbought (K&D > 80).
@@ -816,8 +812,8 @@ try:
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
         *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
-        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
-            *   **%B (%):** Price position relative to bands. >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
+        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev).
+            *   **%B (%):** Price position relative to bands. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
             *   **Width (%):** Tightness of bands. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
             *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening.
         *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored.*
