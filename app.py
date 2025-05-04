@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 4
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 5 (Timestamp)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -480,7 +480,7 @@ try:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") # Spacer per allineare il bottone
-        # *** CORREZIONE INDENTAZIONE QUI ***
+        # *** CORREZIONE INDENTAZIONE QUI (Previous Fix) ***
         if st.button("🔄 Aggiorna", help="Forza aggiornamento dati (cancella cache)", key="refresh_button"):
             logger.info("Bottone Aggiorna cliccato.")
             if 'api_warning_shown' in st.session_state:
@@ -528,15 +528,42 @@ try:
 
     # --- LOGICA PRINCIPALE DASHBOARD CRYPTO (Tabella) ---
     st.subheader(f"📊 Analisi Tecnica Crypto ({NUM_COINS} Asset)"); logger.info("Inizio recupero dati crypto live per tabella."); market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
+
+    # *** CORREZIONE BLOCCO TIMESTAMP QUI ***
     if last_cg_update_utc:
-        timestamp_display_str = "*Timestamp dati live CoinGecko non disp.*";
+        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*" # Default message
         try:
-            if ZoneInfo: local_tz = ZoneInfo("Europe/Rome");
-                         if last_cg_update_utc.tzinfo is None: last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC")); last_cg_update_local = last_cg_update_utc.astimezone(local_tz); timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***"; logger.info(f"Timestamp visualizzato: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else: offset_hours = 2; last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=offset_hours); timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"; logger.info(f"Timestamp visualizzato (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
-        except Exception as e: logger.exception("Errore formattazione timestamp:"); timestamp_display_str = f"*Errore TS ({e}). UTC: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*"
-        last_update_placeholder.markdown(timestamp_display_str)
-    else: logger.warning("Timestamp dati live CoinGecko non disponibile."); last_update_placeholder.markdown("*Timestamp dati live CoinGecko non disponibile.*")
+            if ZoneInfo:
+                local_tz = ZoneInfo("Europe/Rome")
+                # Assicura che il timestamp sia timezone-aware (UTC) prima di convertire
+                if last_cg_update_utc.tzinfo is None:
+                    logger.debug("Timestamp UTC non timezone-aware, aggiungo TZ UTC.")
+                    last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
+
+                # Converti a fuso orario locale
+                last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
+                timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***"
+                logger.info(f"Timestamp visualizzato: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+            else: # Fallback se zoneinfo non è disponibile
+                logger.debug("ZoneInfo non disponibile, uso offset UTC+2 per Roma.")
+                offset_hours = 2
+                last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=offset_hours)
+                timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"
+                logger.info(f"Timestamp visualizzato (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        except Exception as e:
+            logger.exception("Errore durante formattazione/conversione timestamp:")
+            # Mostra errore e timestamp UTC grezzo se la conversione fallisce
+            timestamp_display_str = f"*Errore conversione timestamp ({e}). Ora UTC: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*"
+
+        last_update_placeholder.markdown(timestamp_display_str) # Display the final string
+    else:
+        logger.warning("Timestamp dati live CoinGecko non disponibile (last_cg_update_utc è None).")
+        last_update_placeholder.markdown("*Timestamp dati live CoinGecko non disponibile.*")
+
+    # --- FINE BLOCCO TIMESTAMP CORRETTO ---
+
     table_results_df = pd.DataFrame();
     if market_data_df.empty: msg = "Errore critico: Impossibile caricare dati live CoinGecko. Tabella analisi non generata.";
                              if st.session_state.get("api_warning_shown", False): msg = "Tabella Analisi Tecnica non generata: errore caricamento dati live (possibile limite API CoinGecko)."; logger.error(msg); st.error(msg)
