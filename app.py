@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI)
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 2
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -298,11 +298,15 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
     return vwap
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
+    """Calcola tutti gli indicatori tecnici (ultimo valore) per la tabella."""
     indicators = {"RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,"MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan, "VWAP (1d)": np.nan, "VWAP % Change (1d)": np.nan }
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5; min_len_sma_short = MA_SHORT; min_len_sma_long = MA_LONG; min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
+
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
         if 'volume' not in hist_daily_df.columns: logger.warning(f"{symbol}: TAB: Colonna 'volume' mancante. VWAP N/A."); hist_daily_df['volume'] = np.nan
         close_daily = hist_daily_df['close'].dropna(); len_daily = len(close_daily); df_for_vwap = hist_daily_df[['close', 'volume']]
+
+        # --- Calcoli indicatori giornalieri ---
         if len_daily >= min_len_rsi_base: indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
         else: logger.warning(f"{symbol}: TAB: Dati insuff. ({len_daily}/{min_len_rsi_base}) per RSI(1d)")
         if len_daily >= min_len_srsi_base: k, d = calculate_stoch_rsi(close_daily, RSI_PERIOD, SRSI_PERIOD, SRSI_K, SRSI_D); indicators["SRSI %K (1d)"] = k; indicators["SRSI %D (1d)"] = d
@@ -321,17 +325,32 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
                 else: logger.warning(f"{symbol}: TAB: Impossibile calcolare VWAP % Change")
             else: logger.warning(f"{symbol}: TAB: Dati insuff. ({len(df_for_vwap)}/{min_len_vwap_change}) per VWAP % Change(1d)")
         else: logger.warning(f"{symbol}: TAB: Dati insuff. ({len(df_for_vwap)}/{min_len_vwap_base}) per VWAP(1d)")
+
+        # --- Calcoli indicatori Weekly/Monthly (con indentazione corretta) ---
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try: df_weekly = close_daily.resample('W-MON').last();
-                  if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
-                  else: logger.warning(f"{symbol}: TAB: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
-            except Exception as e: logger.exception(f"{symbol}: TAB: Errore calcolo RSI weekly:")
-            try: df_monthly = close_daily.resample('ME').last();
-                  if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
-                  else: logger.warning(f"{symbol}: TAB: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
-            except Exception as e: logger.exception(f"{symbol}: TAB: Errore calcolo RSI monthly:")
-    else: logger.warning(f"{symbol}: TAB: Dati giornalieri vuoti per calcolo indicatori.")
+            try: # Weekly RSI
+                df_weekly = close_daily.resample('W-MON').last()
+                # *** INDENTAZIONE CORRETTA QUI ***
+                if len(df_weekly.dropna()) >= min_len_rsi_base:
+                    indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
+                else:
+                    logger.warning(f"{symbol}: TAB: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
+            except Exception as e:
+                logger.exception(f"{symbol}: TAB: Errore calcolo RSI weekly:")
+
+            try: # Monthly RSI
+                df_monthly = close_daily.resample('ME').last()
+                 # *** INDENTAZIONE CORRETTA QUI ***
+                if len(df_monthly.dropna()) >= min_len_rsi_base:
+                    indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
+                else:
+                    logger.warning(f"{symbol}: TAB: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
+            except Exception as e:
+                logger.exception(f"{symbol}: TAB: Errore calcolo RSI monthly:")
+    else:
+        logger.warning(f"{symbol}: TAB: Dati giornalieri vuoti per calcolo indicatori.")
     return indicators
+
 
 # --- Funzioni Segnale (v0.3 Logic) ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, vwap_1d, current_price):
@@ -364,33 +383,30 @@ def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current
 # --- NUOVE Funzioni Calcolo Indicatori per Grafico (v0.5) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calcola la SMA per l'intera serie."""
-    if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float) # Ritorna serie vuota se input non valido
+    if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float)
     return series.rolling(window=period, min_periods=period).mean()
 
 def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
     """Calcola l'RSI per l'intera serie."""
     if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float)
-    series = series.dropna()
-    if len(series) < period + 1: return pd.Series(index=series.index, dtype=float) # Non abbastanza dati
+    series_valid = series.dropna() # Lavora solo su dati non NaN
+    if len(series_valid) < period + 1: return pd.Series(index=series.index, dtype=float) # Ritorna NaN se non ci sono abbastanza dati
 
-    delta = series.diff()
+    delta = series_valid.diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
 
-    # Calcola EWM per l'intera serie
     avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
 
-    # Calcola RS e RSI per l'intera serie
-    rs = avg_gain / avg_loss.replace(0, np.nan) # Evita divisione per zero, risulta in NaN dove loss è 0
+    rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100.0 - (100.0 / (1.0 + rs))
-
-    # Gestisci caso speciale dove loss è 0 (rsi diventa inf, poi nan) -> dovrebbe essere 100
-    rsi[avg_loss == 0] = 100.0
-    # Clamp finale (anche se EWM dovrebbe già tenerlo in range)
+    rsi.loc[avg_loss == 0] = 100.0 # Imposta RSI a 100 dove la perdita media è 0 (e c'è guadagno)
     rsi = rsi.clip(0, 100)
 
-    return rsi
+    # Riporta la serie all'indice originale, riempiendo con NaN dove non calcolabile
+    return rsi.reindex(series.index)
+
 
 # --- Funzione Creazione Grafico (Modificata v0.5 per usare calcoli manuali) ---
 def create_coin_chart(df, symbol):
@@ -406,13 +422,17 @@ def create_coin_chart(df, symbol):
     # Calcola indicatori usando le nuove funzioni manuali sulla serie 'close'
     try:
         logger.debug(f"CHART: Calcolo indicatori manuali (SMA, RSI) per {symbol}.")
-        df['MA_Short'] = calculate_sma_series(df['close'], MA_SHORT)
-        df['MA_Long'] = calculate_sma_series(df['close'], MA_LONG)
-        df['RSI'] = calculate_rsi_series(df['close'], RSI_PERIOD)
+        # Assicurati che 'close' non abbia NaN *prima* di passarlo alle funzioni
+        close_series = df['close'].dropna()
+        if close_series.empty: raise ValueError("Serie 'close' è vuota dopo dropna()")
+
+        df['MA_Short'] = calculate_sma_series(close_series, MA_SHORT).reindex(df.index) # Reindex per allineare
+        df['MA_Long'] = calculate_sma_series(close_series, MA_LONG).reindex(df.index)   # Reindex per allineare
+        df['RSI'] = calculate_rsi_series(close_series, RSI_PERIOD).reindex(df.index)     # Reindex per allineare
         logger.debug(f"CHART: Colonne dopo calcoli manuali: {df.columns.tolist()}")
     except Exception as calc_err:
         logger.exception(f"CHART: Errore durante calcolo indicatori manuali per {symbol}:")
-        # Ritorna None, non possiamo creare il grafico senza indicatori
+        st.warning(f"Impossibile calcolare indicatori per il grafico di {symbol}: {calc_err}")
         return None
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
@@ -450,7 +470,8 @@ try:
         if pd.notna(change_val) and isinstance(change_pct_str, str) and change_pct_str not in ['N/A', '', None]:
             try: change_pct_val = float(change_pct_str.replace('%','').strip()); delta_string = f"{change_val:+.2f} ({change_pct_val:+.2f}%)"
             except (ValueError, AttributeError): delta_string = f"{change_val:+.2f} (?%)"
-        elif pd.notna(change_val): delta_string = f"{change_val:+.2f}"; return delta_string
+        elif pd.notna(change_val): delta_string = f"{change_val:+.2f}";
+        return delta_string # Moved return here
     def render_metric(column, label, value_func=None, ticker=None, data_dict=None, help_text=None):
         value_str = "N/A"; delta_txt = None; d_color = "off"
         if ticker and data_dict:
@@ -461,7 +482,8 @@ try:
             try: value_str = value_func(); value_str = str(value_str) if value_str is not None else "N/A"
             except Exception as e: logger.error(f"Errore value_func '{label}': {e}"); value_str = "Errore"
             delta_txt = None; d_color = "off"
-        else: value_str = "N/A"; column.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text)
+        else: value_str = "N/A"; # Removed metric call from here
+        column.metric(label=label, value=value_str, delta=delta_txt, delta_color=d_color, help=help_text) # Call metric once at the end
     overview_items_row1 = [ ("Fear & Greed Index", None, get_fear_greed_index, "Fonte: Alternative.me"), (f"Total Crypto M.Cap ({VS_CURRENCY.upper()})", None, lambda: f"${format_large_number(total_market_cap)}", "Fonte: CoinGecko"), ("Crypto ETFs Flow (Daily)", None, get_etf_flow, "Dato N/A"), ("S&P 500 (SPY)", "SPY", None, "Fonte: AV (ETF)"), ("Nasdaq (QQQ)", "QQQ", None, "Fonte: AV (ETF)") ]
     overview_cols_1 = st.columns(len(overview_items_row1));
     for i, (label, ticker, func, help_text) in enumerate(overview_items_row1): render_metric(overview_cols_1[i], label, value_func=func, ticker=ticker, data_dict=traditional_market_data, help_text=help_text)
