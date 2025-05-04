@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, Format after Style, Keep v1.1 features - Add FIRE_ICON_THRESHOLD back
+# Version: v1.2 - Fix Styler Apply/Map Usage, Format after Style, SRSI Apply Fix
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -54,7 +54,7 @@ SYMBOL_TO_ID_MAP = {
 SYMBOLS = list(SYMBOL_TO_ID_MAP.keys())
 COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
 NUM_COINS = len(SYMBOLS)
-FIRE_ICON_THRESHOLD = 8 # Number of coins needed green in 1h for fire icon
+FIRE_ICON_THRESHOLD = 8
 logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = [
     'SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL',
@@ -630,7 +630,6 @@ try:
 
                 # --- Styling Functions (v1.2 - Return CSS Strings) ---
                 def highlight_signal_style(val):
-                    """Returns CSS style string for signals"""
                     style = 'color: #6c757d;'; font_weight = 'normal';
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
@@ -645,44 +644,48 @@ try:
                     return f'{style} font-weight: {font_weight};'
 
                 def highlight_pct_col_style(val):
-                    """Returns CSS style string for percentages"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
-                    """Returns CSS style string for RSI"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
                     elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
                     else: return ''
 
                 def style_macd_hist(val):
-                    """Returns CSS style string for MACD Hist"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > 0: return 'color: green;'
                     elif val < 0: return 'color: red;'
                     else: return ''
 
                 def style_stoch_rsi(row):
-                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings"""
+                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings FOR THE SUBSET."""
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
-                    # Access original numeric data from the base df (table_results_df) for logic
-                    k_val_num = table_results_df.loc[row.name, k_col] if k_col in table_results_df.columns else np.nan
-                    d_val_num = table_results_df.loc[row.name, d_col] if d_col in table_results_df.columns else np.nan
+                    # Access original numeric data from the base df (table_results_df) using the row's name (index)
+                    original_row_index = row.name
+                    # Need error handling in case index doesn't exist (e.g., if table failed mid-way)
+                    if original_row_index not in table_results_df.index:
+                         return pd.Series('', index=row.index) # Return empty styles
+
+                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
+                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
 
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
-                        elif k_val_num > d_val_num: style_str = 'color: #28a745;'
-                        elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
+                        elif k_val_num > d_val_num: style_str = 'color: #28a745;' # Lighter Green
+                        elif k_val_num < d_val_num: style_str = 'color: #fd7e14;' # Orange
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    styles = pd.Series('', index=row.index)
+                    # Return a Series *with the same index as the input row* containing only the styles for the subset columns
+                    styles = pd.Series('', index=row.index) # Important: Use row.index here!
                     if k_col in styles.index: styles[k_col] = style_k
                     if d_col in styles.index: styles[d_col] = style_d
                     return styles
+
 
                 # --- Define Formatters ---
                 formatters = {}
@@ -695,9 +698,9 @@ try:
 
                 if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
                 if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
-                for col in pct_cols_all: # Format all percent columns (except 1h handled below)
+                for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
-                def format_1h_with_icon(val): # Special formatter for % 1h
+                def format_1h_with_icon(val):
                     if pd.isna(val): return "N/A"
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
                     return f"{icon}{val:+.2f}%"
@@ -726,7 +729,10 @@ try:
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     styled_table = styled_table.apply(lambda row: style_stoch_rsi(table_results_df.loc[row.name]), axis=1, subset=srsi_value_cols) # Apply only to subset
+                     # The function style_stoch_rsi now returns a Series of styles correctly indexed
+                     # Apply it row-wise to the specified columns
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
+
 
                 # Apply formatting LAST
                 styled_table = styled_table.format(formatters, na_rep="N/A", precision=4)
