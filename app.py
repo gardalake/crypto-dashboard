@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, Format after Style, SRSI Apply Fix
+# Version: v1.2 - Remove Heuristic, Add MA30/BBands, Refine Signals, Styling Fixes
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -82,6 +82,7 @@ MACD_SIGNAL = 9
 MA_SHORT = 7
 MA_MEDIUM = 20
 MA_LONG = 50
+MA_XLONG = 30 # Added new MA period
 BB_PERIOD = 20
 BB_STD_DEV = 2.0
 VWAP_PERIOD = 14
@@ -437,7 +438,6 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
-
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calculates SMA for the entire series."""
@@ -630,6 +630,7 @@ try:
 
                 # --- Styling Functions (v1.2 - Return CSS Strings) ---
                 def highlight_signal_style(val):
+                    """Returns CSS style string for signals"""
                     style = 'color: #6c757d;'; font_weight = 'normal';
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
@@ -644,16 +645,19 @@ try:
                     return f'{style} font-weight: {font_weight};'
 
                 def highlight_pct_col_style(val):
+                    """Returns CSS style string for percentages"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
+                    """Returns CSS style string for RSI"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
                     elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
                     else: return ''
 
                 def style_macd_hist(val):
+                    """Returns CSS style string for MACD Hist"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > 0: return 'color: green;'
                     elif val < 0: return 'color: red;'
@@ -665,9 +669,7 @@ try:
                     default_style = ''; style_k = default_style; style_d = default_style
                     # Access original numeric data from the base df (table_results_df) using the row's name (index)
                     original_row_index = row.name
-                    # Need error handling in case index doesn't exist (e.g., if table failed mid-way)
-                    if original_row_index not in table_results_df.index:
-                         return pd.Series('', index=row.index) # Return empty styles
+                    if original_row_index not in table_results_df.index: return pd.Series('', index=row.index)
 
                     k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
                     d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
@@ -680,12 +682,11 @@ try:
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    # Return a Series *with the same index as the input row* containing only the styles for the subset columns
-                    styles = pd.Series('', index=row.index) # Important: Use row.index here!
+                    # Return a Series *with the same index as the input row_subset* containing only the styles for the subset columns
+                    styles = pd.Series('', index=row.index)
                     if k_col in styles.index: styles[k_col] = style_k
                     if d_col in styles.index: styles[d_col] = style_d
                     return styles
-
 
                 # --- Define Formatters ---
                 formatters = {}
@@ -729,10 +730,8 @@ try:
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     # The function style_stoch_rsi now returns a Series of styles correctly indexed
-                     # Apply it row-wise to the specified columns
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
-
+                     # Pass the original dataframe for numeric checks, apply to subset
+                     styled_table = styled_table.apply(lambda row: style_stoch_rsi(table_results_df.loc[row.name]), axis=1, subset=srsi_value_cols)
 
                 # Apply formatting LAST
                 styled_table = styled_table.format(formatters, na_rep="N/A", precision=4)
