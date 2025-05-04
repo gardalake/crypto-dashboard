@@ -1,4 +1,4 @@
-# Version: v0.8 - Remove CoinCodex, Apply v0.7 fixes (English, Styling, VWAP%, Heuristic, Latest Price), Syntax Corrected
+# Version: v0.9 - Added RSI/MACD Hist Coloring, Yellow Flat Heuristic, Keep v0.8 improvements
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -68,18 +68,20 @@ CACHE_TRAD_TTL = 14400 # 4h (Alpha Vantage)
 DAYS_HISTORY_DAILY = 365
 DAYS_HISTORY_HOURLY = 7
 RSI_PERIOD = 14
+RSI_OB = 70.0 # Overbought Threshold
+RSI_OS = 30.0 # Oversold Threshold
 SRSI_PERIOD = 14
 SRSI_K = 3
 SRSI_D = 3
-SRSI_OB = 80.0 # Overbought threshold
-SRSI_OS = 20.0 # Oversold threshold
+SRSI_OB = 80.0 # StochRSI Overbought threshold
+SRSI_OS = 20.0 # StochRSI Oversold threshold
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 MA_SHORT = 20
 MA_LONG = 50
 VWAP_PERIOD = 14
-HEURISTIC_PRED_PERIOD = 3 # Days for simple price change prediction
+HEURISTIC_PRED_PERIOD = 3
 logger.info("Finished global configuration.")
 
 # --- FUNCTION DEFINITIONS (General) ---
@@ -94,7 +96,7 @@ def check_password():
         should_check = login_button_pressed or (password and password != "")
         if not should_check: logger.debug("Waiting for password input or button click."); st.stop()
         else:
-            correct_password = "Leonardo" # Your hardcoded password
+            correct_password = "Leonardo"
             if password == correct_password:
                 logger.info("Password correct."); st.session_state.password_correct = True
                 if st.query_params.get("logged_in") != "true": st.query_params["logged_in"] = "true"; st.rerun()
@@ -338,12 +340,12 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 
         # --- Weekly/Monthly indicators ---
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
-            try: # Weekly RSI
+            try:
                 df_weekly = close_daily.resample('W-MON').last()
                 if len(df_weekly.dropna()) >= min_len_rsi_base: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Weekly data ({len(df_weekly.dropna())}/{min_len_rsi_base}) for RSI(1w)")
             except Exception as e: logger.exception(f"{symbol}: TABLE: Error calculating weekly RSI:")
-            try: # Monthly RSI
+            try:
                 df_monthly = close_daily.resample('ME').last()
                 if len(df_monthly.dropna()) >= min_len_rsi_base: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: TABLE: Insuff Monthly data ({len(df_monthly.dropna())}/{min_len_rsi_base}) for RSI(1mo)")
@@ -365,16 +367,16 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, sr
     else: score -= 1
     if macd_hist > 0: score += 2
     else: score -= 2
-    if rsi_1d < 30: score += 2
+    if rsi_1d < RSI_OS: score += 2 # Use thresholds
     elif rsi_1d < 40: score += 1
-    elif rsi_1d > 70: score -= 2
+    elif rsi_1d > RSI_OB: score -= 2 # Use thresholds
     elif rsi_1d > 60: score -= 1
     if pd.notna(rsi_1w):
         if rsi_1w < 40: score += 1
         elif rsi_1w > 60: score -= 1
     if pd.notna(srsi_k) and pd.notna(srsi_d):
-        if srsi_k < SRSI_OS and srsi_d < SRSI_OS: score += 1 # Use thresholds
-        elif srsi_k > SRSI_OB and srsi_d > SRSI_OB: score -= 1 # Use thresholds
+        if srsi_k < SRSI_OS and srsi_d < SRSI_OS: score += 1
+        elif srsi_k > SRSI_OB and srsi_d > SRSI_OB: score -= 1
         elif srsi_k > srsi_d: score += 0.5
         elif srsi_k < srsi_d: score -= 0.5
     if score >= 5.5: return "⚡️ Strong Buy"
@@ -389,7 +391,9 @@ def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current
     required_inputs = [ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     is_uptrend_ma = ma_short > ma_long; is_downtrend_ma = ma_short < ma_long; is_momentum_positive = macd_hist > 0; is_momentum_negative = macd_hist < 0
-    is_not_extremely_overbought = rsi_1d < 80; is_not_extremely_oversold = rsi_1d > 20; is_price_above_vwap = current_price > vwap_1d; is_price_below_vwap = current_price < vwap_1d
+    is_not_extremely_overbought = rsi_1d < RSI_OB + 10 # Allow slightly higher RSI for strong buy
+    is_not_extremely_oversold = rsi_1d > RSI_OS - 10 # Allow slightly lower RSI for strong sell
+    is_price_above_vwap = current_price > vwap_1d; is_price_below_vwap = current_price < vwap_1d
     if is_uptrend_ma and is_momentum_positive and is_not_extremely_overbought and is_price_above_vwap: return "⚡️ Strong Buy"
     elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold and is_price_below_vwap: return "🚨 Strong Sell"
     else: return "🟡 Hold"
@@ -463,7 +467,8 @@ def create_coin_chart(df, symbol):
     else: logger.warning(f"CHART: MA_Long column not found or empty for {symbol}")
     if 'RSI' in df.columns and df['RSI'].notna().any():
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', line=dict(color='purple', width=1), name='RSI (14d)'), row=2, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="red", line_width=1, row=2, col=1); fig.add_hline(y=30, line_dash="dash", line_color="green", line_width=1, row=2, col=1)
+        fig.add_hline(y=RSI_OB, line_dash="dash", line_color="red", line_width=1, row=2, col=1) # Use constant
+        fig.add_hline(y=RSI_OS, line_dash="dash", line_color="green", line_width=1, row=2, col=1) # Use constant
         fig.update_yaxes(range=[0, 100], row=2, col=1)
     else: logger.warning(f"CHART: RSI column not found or empty for {symbol}"); fig.update_yaxes(title_text='RSI N/A', row=2, col=1)
     fig.update_layout(title=f'{symbol}/{VS_CURRENCY.upper()} Daily Technical Analysis', xaxis_title=None, yaxis_title=f'Price ({VS_CURRENCY.upper()})', yaxis2_title='RSI', xaxis_rangeslider_visible=False, legend_title_text='Indicators', height=600, margin=dict(l=50, r=50, t=50, b=50), hovermode="x unified" )
@@ -589,108 +594,97 @@ try:
                 table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
                 cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", "Heuristic Pred.", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
-                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_srsi_cols = [c for c in df_display_table.columns if ("RSI" in c or "SRSI" in c) and "%" not in c]; # Exclude SRSI %K/D from default num formatting
-                macd_cols = [c for c in df_display_table.columns if "MACD" in c]; ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"] # Separate for specific formatting/styling
+                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_cols = [c for c in df_display_table.columns if "RSI" in c and "%" not in c]; # Exclude SRSI
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]; macd_hist_col = ["MACD Hist (1d)"];
+                ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
 
                 if currency_col in df_display_table.columns: formatters[currency_col] = "${:,.4f}";
                 if volume_col in df_display_table.columns: formatters[volume_col] = lambda x: f"${format_large_number(x)}";
                 for col in pct_cols:
                     if col in df_display_table.columns: formatters[col] = "{:+.2f}%"
-                for col in rsi_srsi_cols: # Apply to RSI only now
+                # Format RSI & SRSI cols
+                for col in rsi_cols + srsi_value_cols:
                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
-                for col in macd_cols:
-                    if col in df_display_table.columns: formatters[col] = "{:.4f}"
+                # Format MACD Hist col
+                if macd_hist_col[0] in df_display_table.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign
+                # Format MA/VWAP cols
                 for col in ma_vwap_cols:
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
-                # Format SRSI K/D specifically
-                for col in srsi_value_cols:
-                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
 
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
 
+                # --- Styling Functions (v0.9) ---
                 def highlight_signal_style(val):
-                    style = 'color: #6c757d;'; font_weight = 'normal'
+                    """Styles signals including Heuristic Pred."""
+                    style = 'color: #6c757d;'; font_weight = 'normal' # Default grey
                     if isinstance(val, str):
-                        if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
-                        elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
-                        elif "Strong Sell" in val: style, font_weight = 'color: #dc3545;', 'bold'
-                        elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;'
-                        elif "CTB" in val: style = 'color: #20c997;'
-                        elif "CTS" in val: style = 'color: #ffc107; color: #000;'
-                        elif "Hold" in val: style = 'color: #6c757d;'
-                        elif "⬆️ Up" in val: style = 'color: #28a745;' # Green for Up
-                        elif "⬇️ Down" in val: style = 'color: #dc3545;' # Red for Down
-                        elif "➡️ Flat" in val: style = 'color: #6c757d;' # Grey for Flat
-                        elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
+                        if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold' # Dark Green
+                        elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;' # Green
+                        elif "Strong Sell" in val: style, font_weight = 'color: #dc3545;', 'bold' # Dark Red
+                        elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;' # Orange
+                        elif "CTB" in val: style = 'color: #20c997;' # Teal
+                        elif "CTS" in val: style = 'color: #ffc107; color: #000;' # Dark Yellow (Black Text)
+                        elif "Hold" in val: style = 'color: #6c757d;' # Grey
+                        elif "⬆️ Up" in val: style = 'color: #28a745;' # Green Arrow
+                        elif "⬇️ Down" in val: style = 'color: #dc3545;' # Red Arrow
+                        elif "➡️ Flat" in val: style = 'color: #ffc107;' # Yellow Arrow *** CHANGED ***
+                        elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;' # Light Grey N/A
                     return f'{style} font-weight: {font_weight};'
 
                 def highlight_pct_col_style(val):
+                    """Colors percentage values green/red."""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
-                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
+                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'
+                    return f'color: {color};'
 
-                # --- NEW SRSI Styling Function (v0.8) ---
+                def style_rsi(val):
+                    """Colors RSI based on OB/OS levels."""
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if val > RSI_OB: return 'color: red; font-weight: bold;'   # Overbought Red
+                    elif val < RSI_OS: return 'color: green; font-weight: bold;' # Oversold Green
+                    else: return '' # Default color
+
+                def style_macd_hist(val):
+                    """Colors MACD Hist based on positive/negative."""
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if val > 0: return 'color: green;' # Positive Green
+                    elif val < 0: return 'color: red;'   # Negative Red
+                    else: return '' # Default color for zero
+
                 def style_stoch_rsi(row):
-                    k_col = "SRSI %K (1d)"
-                    d_col = "SRSI %D (1d)"
-                    # Default style for the row (applied to both K and D cols)
-                    default_style = ''
-                    style_k = default_style
-                    style_d = default_style
-
-                    # Check if both K and D values are present and numeric
+                    """Colors SRSI %K and %D based on levels and crossover."""
+                    k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
+                    default_style = ''; style_k = default_style; style_d = default_style
                     if k_col in row.index and d_col in row.index and pd.notna(row[k_col]) and pd.notna(row[d_col]):
-                        k_val = row[k_col]
-                        d_val = row[d_col]
-
-                        # Overbought condition (strongest)
-                        if k_val > SRSI_OB and d_val > SRSI_OB:
-                            style_str = 'color: red; font-weight: bold;' # Bold Red for Overbought
-                        # Oversold condition (strong)
-                        elif k_val < SRSI_OS and d_val < SRSI_OS:
-                            style_str = 'color: green; font-weight: bold;' # Bold Green for Oversold
-                        # Bullish crossover (not in extreme zones)
-                        elif k_val > d_val:
-                            style_str = 'color: #28a745;' # Lighter Green for Bullish Cross
-                        # Bearish crossover (not in extreme zones)
-                        elif k_val < d_val:
-                            style_str = 'color: #fd7e14;' # Orange/Light Red for Bearish Cross
-                        else:
-                             style_str = default_style # Neutral zone, no specific cross
-
-                        # Apply the determined style to both K and D for this row
-                        style_k = style_str
-                        style_d = style_str
-                    else: # Handle cases where K or D might be NaN
-                         style_k = default_style
-                         style_d = default_style
-
-                    # Return styles for all columns in the row (only K and D will have specific styles)
+                        k_val, d_val = row[k_col], row[d_col]
+                        if k_val > SRSI_OB and d_val > SRSI_OB: style_str = 'color: red; font-weight: bold;'
+                        elif k_val < SRSI_OS and d_val < SRSI_OS: style_str = 'color: green; font-weight: bold;'
+                        elif k_val > d_val: style_str = 'color: #28a745;' # Lighter Green
+                        elif k_val < d_val: style_str = 'color: #fd7e14;' # Orange
+                        else: style_str = default_style
+                        style_k = style_str; style_d = style_str
                     return [style_k if col == k_col else style_d if col == d_col else default_style for col in row.index]
 
-
-                # Apply styles
+                # --- Apply Styles ---
+                # Percentages
                 cols_for_pct_style = [col for col in pct_cols if col in df_display_table.columns];
-                if cols_for_pct_style:
-                    logger.debug(f"Applying PCT style to columns: {cols_for_pct_style}")
-                    styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
-
+                if cols_for_pct_style: styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
+                # Signals (Gemini, GPT, Heuristic)
                 signal_cols_to_style = ["Gemini Alert", "GPT Signal", "Heuristic Pred."]
                 for col in signal_cols_to_style:
-                     if col in df_display_table.columns:
-                         logger.debug(f"Applying Signal style to column: {col}")
-                         styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
-
-                # Apply SRSI row-wise styling
+                     if col in df_display_table.columns: styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
+                # RSI Columns
+                rsi_cols_to_style = [col for col in rsi_cols if col in df_display_table.columns]
+                if rsi_cols_to_style: styled_table = styled_table.applymap(style_rsi, subset=rsi_cols_to_style)
+                # MACD Hist Column
+                if macd_hist_col[0] in df_display_table.columns: styled_table = styled_table.applymap(style_macd_hist, subset=macd_hist_col)
+                # SRSI K/D Columns (Row-wise)
                 srsi_cols_exist = all(col in df_display_table.columns for col in srsi_value_cols)
-                if srsi_cols_exist:
-                     logger.debug("Applying SRSI row-wise styling.")
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
+                if srsi_cols_exist: styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
                 logger.info("Displaying styled table DataFrame."); st.dataframe(styled_table, use_container_width=True, column_config={"Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")})
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
-
         # --- Error Expander Removed ---
 
     # --- Chart Section ---
@@ -698,7 +692,6 @@ try:
     sel_col, price_col = st.columns([3, 1])
     with sel_col:
         chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
-
     with price_col:
         st.write(""); st.write("") # Vertical space
         if chart_symbol:
@@ -726,17 +719,13 @@ try:
 
     # --- CoinCodex Section Removed ---
 
-    # --- Legend (Improved v0.8 - SRSI Colors) ---
+    # --- Legend (Improved v0.9 - Indicator Colors) ---
     st.divider();
     with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False):
         st.markdown("""
         *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
 
-        **Market Overview:**
-        *   **Fear & Greed Index:** Crypto market sentiment (0=Fear, 100=Greed). Low=Opportunity, High=Risk. Source: Alternative.me.
-        *   **Total Crypto M.Cap:** Total market capitalization ($). Source: CoinGecko.
-        *   **Crypto ETFs Flow:** Daily net capital flow ($) into spot crypto ETFs. **Data N/A.**
-        *   **S&P 500 (SPY), etc.:** Traditional market benchmarks. Source: Alpha Vantage (**4h Cache**).
+        **Market Overview:** (See above section for details)
 
         **Crypto Technical Analysis Table:**
         *   **Rank:** Market cap rank (CoinGecko).
@@ -744,16 +733,22 @@ try:
         *   **Heuristic Pred.:** **Simplistic** prediction based on 3-day price change. **NOT AI, NOT reliable.** (See colors below).
         *   **Price:** Current price ($) (CoinGecko).
         *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive.
-        *   **RSI (1d, 1w, 1mo):** Relative Strength Index. Momentum oscillator. <30=Oversold, >70=Overbought (general levels).
-        *   **SRSI %K / %D (1d):** Stochastic RSI. More sensitive momentum oscillator (0-100).
-            *   Values <span style="color:green; font-weight:bold;">(Bold Green)</span>: Both K&D < 20 (Oversold).
-            *   Values <span style="color:red; font-weight:bold;">(Bold Red)</span>: Both K&D > 80 (Overbought).
-            *   Values <span style="color:#28a745;">(Green)</span>: K > D (Bullish crossover, not extreme).
-            *   Values <span style="color:#fd7e14;">(Orange)</span>: K < D (Bearish crossover, not extreme).
+        *   **RSI (1d, 1w, 1mo):** Relative Strength Index. Momentum oscillator.
+            *   <span style="color:red; font-weight:bold;">Value > 70</span>: Overbought (Potential Pullback).
+            *   <span style="color:green; font-weight:bold;">Value < 30</span>: Oversold (Potential Bounce).
+            *   Value (Grey): Neutral zone.
+        *   **SRSI %K / %D (1d):** Stochastic RSI. Sensitive momentum oscillator (0-100).
+            *   <span style="color:green; font-weight:bold;">Values (Bold Green)</span>: Both K&D < 20 (Oversold).
+            *   <span style="color:red; font-weight:bold;">Values (Bold Red)</span>: Both K&D > 80 (Overbought).
+            *   <span style="color:#28a745;">Values (Green)</span>: K > D (Bullish crossover, not extreme).
+            *   <span style="color:#fd7e14;">Values (Orange)</span>: K < D (Bearish crossover, not extreme).
             *   Values (Grey): Neutral zone or K=D.
-        *   **MACD Hist (1d):** MACD Histogram. Measures trend momentum and strength. Positive=Bullish, Negative=Bearish.
-        *   **MA(20d) / MA(50d):** Simple Moving Averages. Trend direction. Price vs MAs and MA crossovers (Golden/Death Cross) are key signals.
-        *   **VWAP (1d):** Volume Weighted Average Price. Price weighted by volume (14-day period). Price > VWAP = Potential strength; Price < VWAP = Potential weakness.
+        *   **MACD Hist (1d):** MACD Histogram. Measures trend momentum.
+            *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
+            *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
+            *   Value (Grey): Zero momentum.
+        *   **MA(20d) / MA(50d):** Simple Moving Averages. Trend direction. Price vs MAs and MA crossovers are key signals (interpreted by Gemini/GPT Signals). *Values not colored.*
+        *   **VWAP (1d):** Volume Weighted Average Price. Price weighted by volume. Price vs VWAP is key (interpreted by Gemini/GPT Signals). *Value not colored.*
         *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
         *   **Volume 24h:** Trading volume ($) (CoinGecko).
         *   **Link:** CoinGecko page link.
@@ -767,17 +762,17 @@ try:
         *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral / Mixed conditions.
         *   <span style="color:#28a745;">⬆️ Up (Heuristic)</span>: Recent price up (>+1%).
         *   <span style="color:#dc3545;">⬇️ Down (Heuristic)</span>: Recent price down (<-1%).
-        *   <span style="color:#6c757d;">➡️ Flat (Heuristic)</span>: Recent price flat (+/-1%).
+        *   <span style="color:#ffc107;">➡️ Flat (Heuristic)</span>: Recent price flat (+/-1%). **(Yellow)**
         *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
 
         **Detailed Coin Chart:**
-        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d).
+        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d) for the selected coin.
 
         **Important Notes:**
-        *   Table data fetch is slowed (6s/coin) due to API limits; initial load takes time.
-        *   Chart data fetch is faster (no delay per coin).
-        *   Traditional market data has **4h cache**.
-        *   **DYOR (Do Your Own Research):** Always conduct thorough research.
+        *   Table data fetch is slowed (6s/coin). Initial load takes time.
+        *   Chart data fetch is faster.
+        *   Traditional Market data has **4h cache**.
+        *   **DYOR (Do Your Own Research).**
         """, unsafe_allow_html=True)
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"Unexpected error: {main_exception}. Check the log.")
