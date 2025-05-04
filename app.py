@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 5 (Timestamp)
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 6 (Main Block Indent)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -479,8 +479,7 @@ try:
     with col_title:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
-        st.write("") # Spacer per allineare il bottone
-        # *** CORREZIONE INDENTAZIONE QUI (Previous Fix) ***
+        st.write("") # Spacer
         if st.button("🔄 Aggiorna", help="Forza aggiornamento dati (cancella cache)", key="refresh_button"):
             logger.info("Bottone Aggiorna cliccato.")
             if 'api_warning_shown' in st.session_state:
@@ -529,45 +528,44 @@ try:
     # --- LOGICA PRINCIPALE DASHBOARD CRYPTO (Tabella) ---
     st.subheader(f"📊 Analisi Tecnica Crypto ({NUM_COINS} Asset)"); logger.info("Inizio recupero dati crypto live per tabella."); market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
 
-    # *** CORREZIONE BLOCCO TIMESTAMP QUI ***
+    # --- Gestione Timestamp (Corretto) ---
     if last_cg_update_utc:
-        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*" # Default message
+        timestamp_display_str = "*Timestamp dati live CoinGecko non disponibile.*"
         try:
             if ZoneInfo:
                 local_tz = ZoneInfo("Europe/Rome")
-                # Assicura che il timestamp sia timezone-aware (UTC) prima di convertire
                 if last_cg_update_utc.tzinfo is None:
                     logger.debug("Timestamp UTC non timezone-aware, aggiungo TZ UTC.")
                     last_cg_update_utc = last_cg_update_utc.replace(tzinfo=ZoneInfo("UTC"))
-
-                # Converti a fuso orario locale
                 last_cg_update_local = last_cg_update_utc.astimezone(local_tz)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}***"
                 logger.info(f"Timestamp visualizzato: {last_cg_update_local.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            else: # Fallback se zoneinfo non è disponibile
+            else:
                 logger.debug("ZoneInfo non disponibile, uso offset UTC+2 per Roma.")
                 offset_hours = 2
                 last_cg_update_rome_approx = last_cg_update_utc + timedelta(hours=offset_hours)
                 timestamp_display_str = f"*Dati live CoinGecko aggiornati alle: **{last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')} (Ora approx. Roma)***"
                 logger.info(f"Timestamp visualizzato (approx): {last_cg_update_rome_approx.strftime('%Y-%m-%d %H:%M:%S')}")
-
         except Exception as e:
             logger.exception("Errore durante formattazione/conversione timestamp:")
-            # Mostra errore e timestamp UTC grezzo se la conversione fallisce
             timestamp_display_str = f"*Errore conversione timestamp ({e}). Ora UTC: {last_cg_update_utc.strftime('%Y-%m-%d %H:%M:%S')}*"
-
-        last_update_placeholder.markdown(timestamp_display_str) # Display the final string
+        last_update_placeholder.markdown(timestamp_display_str)
     else:
         logger.warning("Timestamp dati live CoinGecko non disponibile (last_cg_update_utc è None).")
         last_update_placeholder.markdown("*Timestamp dati live CoinGecko non disponibile.*")
-
-    # --- FINE BLOCCO TIMESTAMP CORRETTO ---
+    # --- Fine Blocco Timestamp ---
 
     table_results_df = pd.DataFrame();
-    if market_data_df.empty: msg = "Errore critico: Impossibile caricare dati live CoinGecko. Tabella analisi non generata.";
-                             if st.session_state.get("api_warning_shown", False): msg = "Tabella Analisi Tecnica non generata: errore caricamento dati live (possibile limite API CoinGecko)."; logger.error(msg); st.error(msg)
+    # --- Verifica Dati Live (Corretto) ---
+    if market_data_df.empty:
+        msg = "Errore critico: Impossibile caricare dati live CoinGecko. Tabella analisi non generata."
+        if st.session_state.get("api_warning_shown", False):
+             msg = "Tabella Analisi Tecnica non generata: errore caricamento dati live (possibile limite API CoinGecko)."
+        logger.error(msg)
+        st.error(msg)
+        # Optionally stop execution: st.stop()
     else:
+        # --- Elaborazione Tabella (se dati live OK) ---
         logger.info(f"Dati live CoinGecko OK ({len(market_data_df)} righe), inizio ciclo elaborazione tabella."); results = []; fetch_errors_for_display = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
         if effective_num_coins != NUM_COINS: logger.warning(f"Numero coin API ({effective_num_coins}) != configurate ({NUM_COINS}). Processando {effective_num_coins}.")
         estimated_wait_secs = effective_num_coins * 1 * 6.0; estimated_wait_mins = estimated_wait_secs / 60; spinner_msg = f"Recupero dati storici e calcolo indicatori tabella per {effective_num_coins} crypto... (~{estimated_wait_mins:.1f} min)"
