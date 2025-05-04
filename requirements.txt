@@ -1,7 +1,7 @@
 streamlit
 pandas
 requests
-numpy
+numpy==1.23.5 # <-- Pinned NumPy version
 alpha-vantage
 plotly
 pandas-ta==0.3.14b0
