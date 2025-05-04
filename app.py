@@ -1,4 +1,4 @@
-# Version: v0.9 - Added RSI/MACD Hist Coloring, Yellow Flat Heuristic, Keep v0.8 improvements
+# Version: v1.0 - Removed Heuristic Pred, Added MA(7/30), BBands (%B, Width), Keep v0.8 fixes
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -68,20 +68,23 @@ CACHE_TRAD_TTL = 14400 # 4h (Alpha Vantage)
 DAYS_HISTORY_DAILY = 365
 DAYS_HISTORY_HOURLY = 7
 RSI_PERIOD = 14
-RSI_OB = 70.0 # Overbought Threshold
-RSI_OS = 30.0 # Oversold Threshold
+RSI_OB = 70.0
+RSI_OS = 30.0
 SRSI_PERIOD = 14
 SRSI_K = 3
 SRSI_D = 3
-SRSI_OB = 80.0 # StochRSI Overbought threshold
-SRSI_OS = 20.0 # StochRSI Oversold threshold
+SRSI_OB = 80.0
+SRSI_OS = 20.0
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
-MA_SHORT = 20
+MA_SHORT = 7  # Changed from 20
+MA_MEDIUM = 20 # Added Medium MA
 MA_LONG = 50
+BB_PERIOD = 20 # Bollinger Bands period (often matches medium MA)
+BB_STD_DEV = 2.0 # Bollinger Bands standard deviation
 VWAP_PERIOD = 14
-HEURISTIC_PRED_PERIOD = 3
+# HEURISTIC_PRED_PERIOD Removed
 logger.info("Finished global configuration.")
 
 # --- FUNCTION DEFINITIONS (General) ---
@@ -309,10 +312,52 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
     vwap = pv.sum() / total_volume
     return vwap
 
+# --- NEW Bollinger Bands Calculation Functions (v1.0) ---
+def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV) -> tuple[float, float, float, float, float]:
+    """Calculates the last values for Bollinger Bands: Mid, Upper, Lower, %B, Width."""
+    if not isinstance(series, pd.Series) or series.empty or series.isna().all():
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+    series = series.dropna()
+    if len(series) < period:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # Calculate Middle Band (SMA)
+    middle_band = series.rolling(window=period, min_periods=period).mean().iloc[-1]
+    # Calculate Standard Deviation
+    std = series.rolling(window=period, min_periods=period).std().iloc[-1]
+
+    if pd.isna(middle_band) or pd.isna(std):
+         return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # Calculate Upper and Lower Bands
+    upper_band = middle_band + (std_dev * std)
+    lower_band = middle_band - (std_dev * std)
+
+    # Calculate %B (% Bollinger)
+    last_price = series.iloc[-1]
+    band_range = upper_band - lower_band
+    percent_b = ((last_price - lower_band) / band_range) * 100 if band_range > 0 else np.nan
+
+    # Calculate Bandwidth
+    bandwidth = (band_range / middle_band) * 100 if middle_band > 0 else np.nan
+
+    return middle_band, upper_band, lower_band, percent_b, bandwidth
+
+
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     """Calculates all technical indicators (last value) for the table."""
-    indicators = {"RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,"MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
-    min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5; min_len_sma_short = MA_SHORT; min_len_sma_long = MA_LONG; min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
+    indicators = {
+        "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan,
+        "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,
+        "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan,
+        f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, # Added MA_MEDIUM
+        "BB %B": np.nan, "BB Width": np.nan, # Added BBands
+        "VWAP (1d)": np.nan, "VWAP %": np.nan
+    }
+    min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5;
+    min_len_sma_short = MA_SHORT; min_len_sma_medium = MA_MEDIUM; min_len_sma_long = MA_LONG;
+    min_len_bb = BB_PERIOD;
+    min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
 
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
         if 'volume' not in hist_daily_df.columns: logger.warning(f"{symbol}: TABLE: 'volume' column missing. VWAP N/A."); hist_daily_df['volume'] = np.nan
@@ -325,10 +370,20 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_srsi_base}) for SRSI(1d)")
         if len_daily >= min_len_macd_base: macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL); indicators["MACD Line (1d)"] = macd_l; indicators["MACD Signal (1d)"] = macd_s; indicators["MACD Hist (1d)"] = macd_h
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_macd_base}) for MACD(1d)")
+        # --- MAs ---
         if len_daily >= min_len_sma_short: indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_short}) for MA({MA_SHORT}d)")
+        if len_daily >= min_len_sma_medium: indicators[f"MA({MA_MEDIUM}d)"] = calculate_sma_manual(close_daily, MA_MEDIUM) # Calculate MA_MEDIUM
+        else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_medium}) for MA({MA_MEDIUM}d)")
         if len_daily >= min_len_sma_long: indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_long}) for MA({MA_LONG}d)")
+        # --- Bollinger Bands ---
+        if len_daily >= min_len_bb:
+             bb_mid, bb_up, bb_low, bb_pct_b, bb_width = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV)
+             indicators["BB %B"] = bb_pct_b
+             indicators["BB Width"] = bb_width
+        else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_bb}) for Bollinger Bands")
+        # --- VWAP ---
         if len(df_for_vwap) >= min_len_vwap_base:
             indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
             if len(df_for_vwap) >= min_len_vwap_change:
@@ -356,20 +411,21 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 # --- Signal Functions ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, vwap_1d, current_price):
     """Generates a signal based on a combination of indicators ('GPT' style)."""
+    # Using MA_SHORT (7d) and MA_LONG (50d) here. MA_MEDIUM (20d) not directly used in signal yet.
     required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, vwap_1d, current_price];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     score = 0
     if current_price > ma_long: score += 1
     else: score -= 1
-    if ma_short > ma_long: score += 2
+    if ma_short > ma_long: score += 2 # Consider shorter-term MA vs longer-term MA
     else: score -= 2
     if current_price > vwap_1d: score += 1
     else: score -= 1
     if macd_hist > 0: score += 2
     else: score -= 2
-    if rsi_1d < RSI_OS: score += 2 # Use thresholds
+    if rsi_1d < RSI_OS: score += 2
     elif rsi_1d < 40: score += 1
-    elif rsi_1d > RSI_OB: score -= 2 # Use thresholds
+    elif rsi_1d > RSI_OB: score -= 2
     elif rsi_1d > 60: score -= 1
     if pd.notna(rsi_1w):
         if rsi_1w < 40: score += 1
@@ -388,35 +444,21 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, sr
 
 def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price):
     """Generates an alert based on MA Crossover, MACD, RSI, and VWAP ('Gemini' style)."""
+    # Using MA_SHORT (7d) and MA_LONG (50d) here.
     required_inputs = [ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     is_uptrend_ma = ma_short > ma_long; is_downtrend_ma = ma_short < ma_long; is_momentum_positive = macd_hist > 0; is_momentum_negative = macd_hist < 0
-    is_not_extremely_overbought = rsi_1d < RSI_OB + 10 # Allow slightly higher RSI for strong buy
-    is_not_extremely_oversold = rsi_1d > RSI_OS - 10 # Allow slightly lower RSI for strong sell
+    is_not_extremely_overbought = rsi_1d < RSI_OB + 10
+    is_not_extremely_oversold = rsi_1d > RSI_OS - 10
     is_price_above_vwap = current_price > vwap_1d; is_price_below_vwap = current_price < vwap_1d
     if is_uptrend_ma and is_momentum_positive and is_not_extremely_overbought and is_price_above_vwap: return "⚡️ Strong Buy"
     elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold and is_price_below_vwap: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
-# --- Heuristic Prediction Function (v0.6) ---
-def generate_heuristic_prediction(hist_daily_df: pd.DataFrame, periods: int = HEURISTIC_PRED_PERIOD) -> str:
-    """Generates a heuristic prediction based on price change over the last 'periods' days."""
-    if hist_daily_df is None or not isinstance(hist_daily_df, pd.DataFrame) or hist_daily_df.empty or 'close' not in hist_daily_df.columns:
-        logger.warning("Heur Pred: Invalid input data."); return "⚪️ N/A"
-    if len(hist_daily_df) < periods + 1:
-        logger.warning(f"Heur Pred: Insuff data ({len(hist_daily_df)}/{periods+1})"); return "⚪️ N/A"
-    try:
-        change = hist_daily_df['close'].pct_change(periods=periods).iloc[-1]
-        if pd.isna(change): logger.warning(f"Heur Pred: pct_change result is NaN."); return "⚪️ N/A"
-        threshold = 0.01
-        if change > threshold: return "⬆️ Up"
-        elif change < -threshold: return "⬇️ Down"
-        else: return "➡️ Flat"
-    except IndexError: logger.warning(f"Heur Pred: Index error during pct_change."); return "⚪️ N/A"
-    except Exception as e: logger.exception(f"Heur Pred: Calculation error: {e}"); return "⚪️ N/A"
+# --- Heuristic Prediction Function REMOVED (v1.0) ---
+# def generate_heuristic_prediction(...)
 
-
-# --- Chart Indicator Calculation Functions (Manual v0.5) ---
+# --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calculates SMA for the entire series."""
     if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float)
@@ -433,10 +475,9 @@ def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Seri
     rsi.loc[avg_loss == 0] = 100.0; rsi = rsi.clip(0, 100)
     return rsi.reindex(series.index)
 
-
-# --- Chart Creation Function (Manual Indicators v0.5) ---
+# --- Chart Creation Function ---
 def create_coin_chart(df, symbol):
-    """Creates Plotly chart with Candlestick, MA, and RSI (manual calcs)."""
+    """Creates Plotly chart with Candlestick, MA, and RSI."""
     logger.info(f"CHART: Creating chart for {symbol} with {len(df)} rows.")
     required_ohlc = ['open', 'high', 'low', 'close'];
     if df.empty or not all(col in df.columns for col in required_ohlc): logger.warning(f"CHART: Empty DataFrame or missing OHLC for {symbol}. Columns: {df.columns.tolist()}"); return None
@@ -450,7 +491,8 @@ def create_coin_chart(df, symbol):
         logger.debug(f"CHART: Calculating manual indicators (SMA, RSI) for {symbol}.")
         close_series = df['close'].dropna()
         if close_series.empty: raise ValueError("'close' series is empty after dropna()")
-        df['MA_Short'] = calculate_sma_series(close_series, MA_SHORT).reindex(df.index)
+        # Using MA_MEDIUM (20d) and MA_LONG (50d) for chart consistency with BBands default
+        df['MA_Medium'] = calculate_sma_series(close_series, MA_MEDIUM).reindex(df.index)
         df['MA_Long'] = calculate_sma_series(close_series, MA_LONG).reindex(df.index)
         df['RSI'] = calculate_rsi_series(close_series, RSI_PERIOD).reindex(df.index)
         logger.debug(f"CHART: Columns after manual calculations: {df.columns.tolist()}")
@@ -461,14 +503,14 @@ def create_coin_chart(df, symbol):
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
     fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=f'{symbol} Price (Daily)', increasing_line_color= 'green', decreasing_line_color= 'red'), row=1, col=1)
-    if 'MA_Short' in df.columns and df['MA_Short'].notna().any(): fig.add_trace(go.Scatter(x=df.index, y=df['MA_Short'], mode='lines', line=dict(color='blue', width=1), name=f'MA({MA_SHORT}d)'), row=1, col=1)
-    else: logger.warning(f"CHART: MA_Short column not found or empty for {symbol}")
+    if 'MA_Medium' in df.columns and df['MA_Medium'].notna().any(): fig.add_trace(go.Scatter(x=df.index, y=df['MA_Medium'], mode='lines', line=dict(color='blue', width=1), name=f'MA({MA_MEDIUM}d)'), row=1, col=1) # Changed to Medium
+    else: logger.warning(f"CHART: MA_Medium column not found or empty for {symbol}")
     if 'MA_Long' in df.columns and df['MA_Long'].notna().any(): fig.add_trace(go.Scatter(x=df.index, y=df['MA_Long'], mode='lines', line=dict(color='orange', width=1), name=f'MA({MA_LONG}d)'), row=1, col=1)
     else: logger.warning(f"CHART: MA_Long column not found or empty for {symbol}")
     if 'RSI' in df.columns and df['RSI'].notna().any():
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', line=dict(color='purple', width=1), name='RSI (14d)'), row=2, col=1)
-        fig.add_hline(y=RSI_OB, line_dash="dash", line_color="red", line_width=1, row=2, col=1) # Use constant
-        fig.add_hline(y=RSI_OS, line_dash="dash", line_color="green", line_width=1, row=2, col=1) # Use constant
+        fig.add_hline(y=RSI_OB, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
+        fig.add_hline(y=RSI_OS, line_dash="dash", line_color="green", line_width=1, row=2, col=1)
         fig.update_yaxes(range=[0, 100], row=2, col=1)
     else: logger.warning(f"CHART: RSI column not found or empty for {symbol}"); fig.update_yaxes(title_text='RSI N/A', row=2, col=1)
     fig.update_layout(title=f'{symbol}/{VS_CURRENCY.upper()} Daily Technical Analysis', xaxis_title=None, yaxis_title=f'Price ({VS_CURRENCY.upper()})', yaxis2_title='RSI', xaxis_rangeslider_visible=False, legend_title_text='Indicators', height=600, margin=dict(l=50, r=50, t=50, b=50), hovermode="x unified" )
@@ -482,18 +524,16 @@ try:
 
     # --- Title, Refresh Button, Timestamp ---
     col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
-    with col_title:
-        st.title("📈 Crypto Technical Dashboard Pro")
+    with col_title: st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
-        st.write("") # Spacer
+        st.write("")
         if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button"):
-            logger.info("Refresh button clicked.")
+            logger.info("Refresh button clicked.");
             if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
 
     last_update_placeholder = st.empty()
     st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Chart History ({CACHE_CHART_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
-
 
     # --- Market Overview Section ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
@@ -571,18 +611,32 @@ try:
                     change_1h=live_data.get('price_change_percentage_1h_in_currency',np.nan); change_24h=live_data.get('price_change_percentage_24h_in_currency',np.nan); change_7d=live_data.get('price_change_percentage_7d_in_currency',np.nan); change_30d=live_data.get('price_change_percentage_30d_in_currency',np.nan); change_1y=live_data.get('price_change_percentage_1y_in_currency',np.nan)
                     hist_daily_df_table, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
 
-                    indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A"; heuristic_pred = "⚪️ N/A"
+                    indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A"; # heuristic_pred Removed
                     if status_daily != "Success":
                         fetch_errors_for_display.append(f"{symbol}: Daily History (Table) - {status_daily}");
                         logger.warning(f"{symbol}: Could not calculate table indicators/signals.")
                     else:
                         indicators = compute_all_indicators(symbol, hist_daily_df_table)
+                        # Use MA_SHORT (7d) and MA_LONG (50d) for signals
                         gpt_signal = generate_gpt_signal( indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("VWAP (1d)"), current_price)
                         gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
-                        heuristic_pred = generate_heuristic_prediction(hist_daily_df_table)
+                        # heuristic_pred Removed
 
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
-                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal, "Heuristic Pred.": heuristic_pred, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
+                    results.append({
+                        "Rank": rank, "Symbol": symbol, "Name": name,
+                        "Gemini Alert": gemini_alert, "GPT Signal": gpt_signal, # Removed Heuristic
+                        f"Price ({VS_CURRENCY.upper()})": current_price,
+                        "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y,
+                        "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"),
+                        "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"),
+                        "MACD Hist (1d)": indicators.get("MACD Hist (1d)"),
+                        f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), # Added MA Medium
+                        "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), # Added BBands
+                        "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"),
+                        f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
+                        "Link": coingecko_link
+                    })
                     logger.info(f"--- Table processing for {symbol} completed. ---"); actual_processed_count += 1
                 except Exception as coin_err: err_msg = f"Critical error processing table for {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Critical Table Error - See Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Finished crypto table loop. Processed {actual_processed_count}/{effective_num_coins} coins. Time: {total_time:.1f} sec"); st.sidebar.info(f"Table Processing Time: {total_time:.1f} sec")
@@ -592,30 +646,42 @@ try:
             logger.info(f"Creating final table DataFrame with {len(results)} results.");
             try:
                 table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
-                cols_order = [ "Symbol", "Name", "Gemini Alert", "GPT Signal", "Heuristic Pred.", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link" ]
+                # *** Updated Column Order ***
+                cols_order = [
+                    "Symbol", "Name", "Gemini Alert", "GPT Signal", # Removed Heuristic Pred
+                    f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y",
+                    "RSI (1d)", "RSI (1w)", "RSI (1mo)",
+                    "SRSI %K (1d)", "SRSI %D (1d)",
+                    "MACD Hist (1d)",
+                    f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_LONG}d)", # Added MA Medium
+                    "BB %B", "BB Width", # Added BBands
+                    "VWAP (1d)", "VWAP %",
+                    f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
+                ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
-                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"; pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %"]; rsi_cols = [c for c in df_display_table.columns if "RSI" in c and "%" not in c]; # Exclude SRSI
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]; macd_hist_col = ["MACD Hist (1d)"];
+                formatters = {}; currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})";
+                pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width"]; # Added BB Width
+                rsi_cols = [c for c in df_display_table.columns if "RSI" in c and "%" not in c and "SRSI" not in c];
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"];
+                macd_hist_col = ["MACD Hist (1d)"];
                 ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+                bband_pct_b_col = ["BB %B"] # Format as %
 
                 if currency_col in df_display_table.columns: formatters[currency_col] = "${:,.4f}";
                 if volume_col in df_display_table.columns: formatters[volume_col] = lambda x: f"${format_large_number(x)}";
-                for col in pct_cols:
+                for col in pct_cols + bband_pct_b_col: # Format BB%B and BB Width as percentage
                     if col in df_display_table.columns: formatters[col] = "{:+.2f}%"
-                # Format RSI & SRSI cols
-                for col in rsi_cols + srsi_value_cols:
+                for col in rsi_cols + srsi_value_cols: # RSI and SRSI K/D
                     if col in df_display_table.columns: formatters[col] = "{:.1f}"
-                # Format MACD Hist col
-                if macd_hist_col[0] in df_display_table.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign
-                # Format MA/VWAP cols
-                for col in ma_vwap_cols:
+                if macd_hist_col[0] in df_display_table.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign to MACD Hist
+                for col in ma_vwap_cols: # MAs and VWAP Value
                     if col in df_display_table.columns: formatters[col] = "{:,.2f}"
 
                 styled_table = df_display_table.style.format(formatters, na_rep="N/A", precision=4, subset=list(formatters.keys()))
 
-                # --- Styling Functions (v0.9) ---
+                # --- Updated Styling Functions (v0.9) ---
                 def highlight_signal_style(val):
-                    """Styles signals including Heuristic Pred."""
+                    """Styles signals."""
                     style = 'color: #6c757d;'; font_weight = 'normal' # Default grey
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold' # Dark Green
@@ -625,9 +691,7 @@ try:
                         elif "CTB" in val: style = 'color: #20c997;' # Teal
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;' # Dark Yellow (Black Text)
                         elif "Hold" in val: style = 'color: #6c757d;' # Grey
-                        elif "⬆️ Up" in val: style = 'color: #28a745;' # Green Arrow
-                        elif "⬇️ Down" in val: style = 'color: #dc3545;' # Red Arrow
-                        elif "➡️ Flat" in val: style = 'color: #ffc107;' # Yellow Arrow *** CHANGED ***
+                        # Heuristic removed
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;' # Light Grey N/A
                     return f'{style} font-weight: {font_weight};'
 
@@ -640,8 +704,8 @@ try:
                 def style_rsi(val):
                     """Colors RSI based on OB/OS levels."""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
-                    if val > RSI_OB: return 'color: red; font-weight: bold;'   # Overbought Red
-                    elif val < RSI_OS: return 'color: green; font-weight: bold;' # Oversold Green
+                    if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'   # Overbought Red (Darker)
+                    elif val < RSI_OS: return 'color: #198754; font-weight: bold;' # Oversold Green (Darker)
                     else: return '' # Default color
 
                 def style_macd_hist(val):
@@ -657,8 +721,8 @@ try:
                     default_style = ''; style_k = default_style; style_d = default_style
                     if k_col in row.index and d_col in row.index and pd.notna(row[k_col]) and pd.notna(row[d_col]):
                         k_val, d_val = row[k_col], row[d_col]
-                        if k_val > SRSI_OB and d_val > SRSI_OB: style_str = 'color: red; font-weight: bold;'
-                        elif k_val < SRSI_OS and d_val < SRSI_OS: style_str = 'color: green; font-weight: bold;'
+                        if k_val > SRSI_OB and d_val > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;' # Bold Red
+                        elif k_val < SRSI_OS and d_val < SRSI_OS: style_str = 'color: #198754; font-weight: bold;' # Bold Green
                         elif k_val > d_val: style_str = 'color: #28a745;' # Lighter Green
                         elif k_val < d_val: style_str = 'color: #fd7e14;' # Orange
                         else: style_str = default_style
@@ -666,19 +730,18 @@ try:
                     return [style_k if col == k_col else style_d if col == d_col else default_style for col in row.index]
 
                 # --- Apply Styles ---
-                # Percentages
                 cols_for_pct_style = [col for col in pct_cols if col in df_display_table.columns];
                 if cols_for_pct_style: styled_table = styled_table.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
-                # Signals (Gemini, GPT, Heuristic)
-                signal_cols_to_style = ["Gemini Alert", "GPT Signal", "Heuristic Pred."]
+
+                signal_cols_to_style = ["Gemini Alert", "GPT Signal"] # Removed Heuristic
                 for col in signal_cols_to_style:
                      if col in df_display_table.columns: styled_table = styled_table.applymap(highlight_signal_style, subset=[col])
-                # RSI Columns
+
                 rsi_cols_to_style = [col for col in rsi_cols if col in df_display_table.columns]
                 if rsi_cols_to_style: styled_table = styled_table.applymap(style_rsi, subset=rsi_cols_to_style)
-                # MACD Hist Column
+
                 if macd_hist_col[0] in df_display_table.columns: styled_table = styled_table.applymap(style_macd_hist, subset=macd_hist_col)
-                # SRSI K/D Columns (Row-wise)
+
                 srsi_cols_exist = all(col in df_display_table.columns for col in srsi_value_cols)
                 if srsi_cols_exist: styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
@@ -693,7 +756,7 @@ try:
     with sel_col:
         chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
     with price_col:
-        st.write(""); st.write("") # Vertical space
+        st.write(""); st.write("")
         if chart_symbol:
             chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
             if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
@@ -730,25 +793,27 @@ try:
         **Crypto Technical Analysis Table:**
         *   **Rank:** Market cap rank (CoinGecko).
         *   **Gemini Alert / GPT Signal:** **Experimental** signals. **NOT trading advice.** (See colors below).
-        *   **Heuristic Pred.:** **Simplistic** prediction based on 3-day price change. **NOT AI, NOT reliable.** (See colors below).
         *   **Price:** Current price ($) (CoinGecko).
         *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive.
-        *   **RSI (1d, 1w, 1mo):** Relative Strength Index. Momentum oscillator.
-            *   <span style="color:red; font-weight:bold;">Value > 70</span>: Overbought (Potential Pullback).
-            *   <span style="color:green; font-weight:bold;">Value < 30</span>: Oversold (Potential Bounce).
-            *   Value (Grey): Neutral zone.
+        *   **RSI (1d, 1w, 1mo):** Relative Strength Index. Momentum oscillator (0-100).
+            *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought (Potential Pullback).
+            *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold (Potential Bounce).
+            *   Value (Default Color): Neutral zone.
         *   **SRSI %K / %D (1d):** Stochastic RSI. Sensitive momentum oscillator (0-100).
-            *   <span style="color:green; font-weight:bold;">Values (Bold Green)</span>: Both K&D < 20 (Oversold).
-            *   <span style="color:red; font-weight:bold;">Values (Bold Red)</span>: Both K&D > 80 (Overbought).
+            *   <span style="color:#198754; font-weight:bold;">Values (Bold Green)</span>: Both K&D < 20 (Oversold).
+            *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Both K&D > 80 (Overbought).
             *   <span style="color:#28a745;">Values (Green)</span>: K > D (Bullish crossover, not extreme).
             *   <span style="color:#fd7e14;">Values (Orange)</span>: K < D (Bearish crossover, not extreme).
-            *   Values (Grey): Neutral zone or K=D.
+            *   Values (Default Color): Neutral zone or K=D.
         *   **MACD Hist (1d):** MACD Histogram. Measures trend momentum.
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
-            *   Value (Grey): Zero momentum.
-        *   **MA(20d) / MA(50d):** Simple Moving Averages. Trend direction. Price vs MAs and MA crossovers are key signals (interpreted by Gemini/GPT Signals). *Values not colored.*
-        *   **VWAP (1d):** Volume Weighted Average Price. Price weighted by volume. Price vs VWAP is key (interpreted by Gemini/GPT Signals). *Value not colored.*
+            *   Value (Default Color): Zero momentum.
+        *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. Price vs MAs and MA crossovers (Golden/Death Cross) are key signals (interpreted by Gemini/GPT Signals). *Values not colored.*
+        *   **BB %B / Width:** Bollinger Bands indicators (Period: 20, StdDev: 2).
+            *   **%B:** Price position relative to bands. >100% = Above Upper Band; <0% = Below Lower Band. Often formatted as %.
+            *   **Width:** Tightness of the bands (Upper-Lower)/Middle. Low width suggests low volatility (potential for breakout), high width suggests high volatility. Often formatted as %. <span style="color:red;">Red</span>=Negative change (bands narrowing), <span style="color:green;">Green</span>=Positive change (bands widening) - *Note: Direct coloring of width not implemented, interpreted via signals.*
+        *   **VWAP (1d):** Volume Weighted Average Price. Price vs VWAP is key. *Value not colored.*
         *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
         *   **Volume 24h:** Trading volume ($) (CoinGecko).
         *   **Link:** CoinGecko page link.
@@ -760,13 +825,10 @@ try:
         *   <span style="color:#20c997;">⏳ CTB</span>: Consider To Buy (Monitor).
         *   <span style="color:#ffc107; color:#000;">⚠️ CTS</span>: Consider To Sell (Monitor).
         *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral / Mixed conditions.
-        *   <span style="color:#28a745;">⬆️ Up (Heuristic)</span>: Recent price up (>+1%).
-        *   <span style="color:#dc3545;">⬇️ Down (Heuristic)</span>: Recent price down (<-1%).
-        *   <span style="color:#ffc107;">➡️ Flat (Heuristic)</span>: Recent price flat (+/-1%). **(Yellow)**
         *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
 
         **Detailed Coin Chart:**
-        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d) for the selected coin.
+        *   Displays daily Candlesticks, Moving Averages (20d, 50d - standard chart MAs), and RSI (14d).
 
         **Important Notes:**
         *   Table data fetch is slowed (6s/coin). Initial load takes time.
