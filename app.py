@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, Keep v1.1 features
+# Version: v1.2 - Fix Styler Apply/Map Usage, Keep v1.1 features - Syntax Fix 10
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -437,6 +437,7 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
+
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calculates SMA for the entire series."""
@@ -637,12 +638,13 @@ try:
                     "VWAP (1d)", "VWAP %",
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
                 ]
-                cols_to_show = [col for col in cols_order if col in table_results_df.columns]; df_display_table = table_results_df[cols_to_show].copy()
+                cols_to_show = [col for col in cols_order if col in table_results_df.columns];
+                df_display = table_results_df[cols_to_show].copy() # Use this df for styling
 
-                # --- Styling Functions (v1.2) ---
+                # --- Styling Functions (v1.2 - Adjusted for .map) ---
                 def highlight_signal_style(val):
-                    """Styles signals"""
-                    style = 'color: #6c757d;'; font_weight = 'normal'; text=str(val)
+                    """Styles signals - returns CSS string"""
+                    style = 'color: #6c757d;'; font_weight = 'normal';
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
                         elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
@@ -652,41 +654,33 @@ try:
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): text = "N/A"; style = 'color: #adb5bd;'
-                    return f'<span style="{style} font-weight: {font_weight};">{text}</span>'
+                    elif pd.isna(val): style = 'color: #adb5bd;'
+                    return f'{style} font-weight: {font_weight};'
 
-                def highlight_pct_col_style_and_format(val, add_icon=False):
-                    """Colors and formats percentage values green/red."""
-                    if pd.isna(val) or not isinstance(val, (int, float)): return "N/A"
-                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'
-                    icon = "🔥 " if add_icon and show_fire_icon and val > 0 else ""
-                    formatted_val = f"{icon}{val:+.2f}%"
-                    return f'<span style="color: {color};">{formatted_val}</span>'
+                def highlight_pct_col_style(val):
+                    """Colors percentage values - returns CSS string"""
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
-                def style_and_format_rsi(val):
-                    """Colors and formats RSI based on OB/OS levels."""
-                    if pd.isna(val) or not isinstance(val, (int, float)): return "N/A"
-                    formatted_val = f"{val:.1f}"
-                    if val > RSI_OB: style = 'color: #dc3545; font-weight: bold;'
-                    elif val < RSI_OS: style = 'color: #198754; font-weight: bold;'
-                    else: style = ''
-                    return f'<span style="{style}">{formatted_val}</span>'
+                def style_rsi(val):
+                    """Colors RSI based on OB/OS levels - returns CSS string"""
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
+                    elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
+                    else: return ''
 
-                def style_and_format_macd_hist(val):
-                    """Colors and formats MACD Hist based on positive/negative."""
-                    if pd.isna(val) or not isinstance(val, (int, float)): return "N/A"
-                    color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'
-                    formatted_val = f"{val:+.4f}"
-                    return f'<span style="color: {color};">{formatted_val}</span>'
+                def style_macd_hist(val):
+                    """Colors MACD Hist based on positive/negative - returns CSS string"""
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if val > 0: return 'color: green;'
+                    elif val < 0: return 'color: red;'
+                    else: return ''
 
                 def style_stoch_rsi(row):
-                    """Applies row-wise style to SRSI cols, expects formatted strings already in row."""
+                    """Applies row-wise style CSS strings to SRSI cols - returns Series of CSS strings"""
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
-                    k_text = row[k_col] if k_col in row.index else "N/A"
-                    d_text = row[d_col] if d_col in row.index else "N/A"
-
-                    # Access original numeric data for comparison logic
+                    # Access original numeric data from the base df (table_results_df) for logic
                     k_val_num = table_results_df.loc[row.name, k_col] if k_col in table_results_df.columns else np.nan
                     d_val_num = table_results_df.loc[row.name, d_col] if d_col in table_results_df.columns else np.nan
 
@@ -698,61 +692,70 @@ try:
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    # Return styled HTML strings for the row, preserving existing text
-                    return [f'<span style="{style_k}">{k_text}</span>' if col == k_col else
-                            f'<span style="{style_d}">{d_text}</span>' if col == d_col else
-                            row[col] # Return original (potentially styled) value for other columns
-                            for col in row.index]
+                    # Return a Series of CSS styles aligned with the input row's index
+                    styles = pd.Series('', index=row.index)
+                    if k_col in styles.index: styles[k_col] = style_k
+                    if d_col in styles.index: styles[d_col] = style_d
+                    return styles
 
-                # --- Apply Formatting and Styles using .map and .apply ---
-                df_styled_display = df_display_table.astype(str) # Start with strings
+                # --- Apply Styles and Formatting ---
+                styled_table = df_display.style # Start with the data copy
 
-                # Apply formatting/styling with .map where possible
+                # Define columns for different styling/formatting groups
                 signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
-                pct_cols_no_1h = ["% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
-                rsi_cols = [c for c in df_display_table.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
+                rsi_cols = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
                 macd_hist_col = ["MACD Hist (1d)"]
-                srsi_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
+
+                # Apply cell-wise styles using .map
+                cols_for_pct_style = [col for col in pct_cols if col in df_display.columns]
+                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
 
                 for col in signal_cols:
-                    if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].map(highlight_signal_style)
-                for col in pct_cols_no_1h:
-                     if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].map(lambda x: highlight_pct_col_style_and_format(x, add_icon=False))
-                if '% 1h' in df_styled_display.columns: df_styled_display['% 1h'] = df_display_table['% 1h'].map(lambda x: highlight_pct_col_style_and_format(x, add_icon=True))
-                for col in rsi_cols:
-                     if col in df_styled_display.columns: df_styled_display[col] = df_display_table[col].map(style_and_format_rsi)
-                if macd_hist_col[0] in df_styled_display.columns: df_styled_display[macd_hist_col[0]] = df_display_table[macd_hist_col[0]].map(style_and_format_macd_hist)
+                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
 
-                # Format SRSI values first (needed for row-wise apply)
-                for col in srsi_cols:
-                     if col in df_styled_display.columns:
-                         df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+                rsi_cols_to_style = [col for col in rsi_cols if col in df_display.columns]
+                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
 
-                # Apply row-wise styling for SRSI (without subset)
-                srsi_cols_exist = all(col in df_display_table.columns for col in srsi_cols)
+                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
+
+                # Apply row-wise styling for SRSI *without subset*
+                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     # Apply the styling function to the df with formatted strings
-                     df_styled_display = df_styled_display.apply(style_stoch_rsi, axis=1)
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1)
 
-                # Format remaining numeric columns
-                num_cols_to_format = [c for c in df_display_table.columns if c not in df_styled_display.columns or df_styled_display[c].equals(df_display_table[c].astype(str))] # Format only if not already handled
-                ma_vwap_cols = [c for c in df_display_table.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
-                currency_col = f"Price ({VS_CURRENCY.upper()})"
-                volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                # Apply formatting last (this modifies the displayed values)
+                formatters = {}
+                if f"Price ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Price ({VS_CURRENCY.upper()})"] = "${:,.4f}"
+                if f"Volume 24h ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Volume 24h ({VS_CURRENCY.upper()})"] = lambda x: format_large_number(x)
+                for col in pct_cols: # Exclude % 1h initially
+                    if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
+                # Special formatter for % 1h
+                def format_1h_with_icon(val):
+                    if pd.isna(val): return "N/A"
+                    icon = "🔥 " if show_fire_icon and val > 0 else ""
+                    return f"{icon}{val:+.2f}%"
+                if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
+                # Format remaining numeric indicators
+                for col in rsi_cols + srsi_value_cols:
+                     if col in df_display.columns: formatters[col] = "{:.1f}"
+                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
+                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+                for col in ma_vwap_cols:
+                     if col in df_display.columns: formatters[col] = "{:,.2f}"
 
-                for col in ma_vwap_cols + [currency_col] + [volume_col]:
-                     if col in df_styled_display.columns:
-                         if col == volume_col: df_styled_display[col] = df_display_table[col].apply(lambda x: format_large_number(x) if pd.notna(x) else "N/A")
-                         elif col == currency_col: df_styled_display[col] = df_display_table[col].apply(lambda x: f"${x:,.4f}" if pd.notna(x) else "N/A")
-                         else: df_styled_display[col] = df_display_table[col].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A")
+                styled_table = styled_table.format(formatters, na_rep="N/A")
 
-                # Handle Link separately
-                if "Link" in df_styled_display.columns: df_styled_display["Link"] = df_display_table["Link"]
-
-                # Display the HTML rendered DataFrame
+                # --- Display Table ---
                 logger.info("Displaying styled table DataFrame.");
-                st.markdown(df_styled_display.to_html(escape=False, index=True), unsafe_allow_html=True)
+                st.dataframe(styled_table, use_container_width=True,
+                             column_config={
+                                 "MA/MACD Cross Alert": st.column_config.TextColumn(label="MA/MACD\nCross Alert", width="small"),
+                                 "Composite Score": st.column_config.TextColumn(label="Composite\nScore", width="small"),
+                                 "Link": st.column_config.LinkColumn("CoinGecko", help="CoinGecko Link", display_text="🔗 Link", width="small")
+                             })
 
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
@@ -797,7 +800,7 @@ try:
 
         **Crypto Technical Analysis Table:**
         *   **Rank:** Market cap rank (CoinGecko).
-        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** Signal logic refined in v1.1 using MAs(7/20/50), MACD, RSI(1d/1w), SRSI, BBands, VWAP. (See colors below).
+        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** Signal logic refined in v1.1. (See colors below).
         *   **Price:** Current price ($) (CoinGecko).
         *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive. 🔥 Icon on % 1h indicates market breadth (>=8 coins positive).
         *   **RSI (1d, 1w, 1mo):** Relative Strength Index (0-100).
@@ -812,9 +815,9 @@ try:
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
         *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
-        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev).
-            *   **%B (%):** Price position relative to bands. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
-            *   **Width (%):** Tightness of bands. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
+        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
+            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
+            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
             *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening.
         *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored.*
         *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
