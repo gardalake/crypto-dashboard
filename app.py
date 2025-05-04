@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, Keep v1.1 features - Syntax Fix 10
+# Version: v1.2 - Fix Styler Apply/Map Usage, Format after Style, Keep v1.1 features
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -437,7 +437,6 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
-
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calculates SMA for the entire series."""
@@ -641,9 +640,9 @@ try:
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
                 df_display = table_results_df[cols_to_show].copy() # Use this df for styling
 
-                # --- Styling Functions (v1.2 - Adjusted for .map) ---
+                # --- Styling Functions (v1.2 - Return CSS Strings) ---
                 def highlight_signal_style(val):
-                    """Styles signals - returns CSS string"""
+                    """Returns CSS style string for signals"""
                     style = 'color: #6c757d;'; font_weight = 'normal';
                     if isinstance(val, str):
                         if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
@@ -658,26 +657,26 @@ try:
                     return f'{style} font-weight: {font_weight};'
 
                 def highlight_pct_col_style(val):
-                    """Colors percentage values - returns CSS string"""
+                    """Returns CSS style string for percentages"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
-                    """Colors RSI based on OB/OS levels - returns CSS string"""
+                    """Returns CSS style string for RSI"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
                     elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
                     else: return ''
 
                 def style_macd_hist(val):
-                    """Colors MACD Hist based on positive/negative - returns CSS string"""
+                    """Returns CSS style string for MACD Hist"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > 0: return 'color: green;'
                     elif val < 0: return 'color: red;'
                     else: return ''
 
                 def style_stoch_rsi(row):
-                    """Applies row-wise style CSS strings to SRSI cols - returns Series of CSS strings"""
+                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings"""
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
                     # Access original numeric data from the base df (table_results_df) for logic
@@ -692,24 +691,22 @@ try:
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    # Return a Series of CSS styles aligned with the input row's index
                     styles = pd.Series('', index=row.index)
                     if k_col in styles.index: styles[k_col] = style_k
                     if d_col in styles.index: styles[d_col] = style_d
                     return styles
 
-                # --- Apply Styles and Formatting ---
+                # --- Apply Styles FIRST ---
                 styled_table = df_display.style # Start with the data copy
 
-                # Define columns for different styling/formatting groups
+                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
                 signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
-                pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
                 rsi_cols = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
                 srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
                 macd_hist_col = ["MACD Hist (1d)"]
 
                 # Apply cell-wise styles using .map
-                cols_for_pct_style = [col for col in pct_cols if col in df_display.columns]
+                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
                 if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
 
                 for col in signal_cols:
@@ -724,13 +721,15 @@ try:
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1)
+                     # Pass the ORIGINAL dataframe for numeric checks
+                     styled_table = styled_table.apply(lambda row: style_stoch_rsi(table_results_df.loc[row.name]), axis=1) # Apply row-wise styling
 
-                # Apply formatting last (this modifies the displayed values)
+                # --- Apply Formatting LAST ---
                 formatters = {}
                 if f"Price ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Price ({VS_CURRENCY.upper()})"] = "${:,.4f}"
                 if f"Volume 24h ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Volume 24h ({VS_CURRENCY.upper()})"] = lambda x: format_large_number(x)
-                for col in pct_cols: # Exclude % 1h initially
+                # Format all percent columns (except 1h which needs icon)
+                for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
                 # Special formatter for % 1h
                 def format_1h_with_icon(val):
@@ -746,9 +745,10 @@ try:
                 for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
 
-                styled_table = styled_table.format(formatters, na_rep="N/A")
+                # Apply the formatters
+                styled_table = styled_table.format(formatters, na_rep="N/A", precision=4)
 
-                # --- Display Table ---
+                # --- Display Table using st.dataframe ---
                 logger.info("Displaying styled table DataFrame.");
                 st.dataframe(styled_table, use_container_width=True,
                              column_config={
@@ -769,6 +769,7 @@ try:
         st.write(""); st.write("")
         if chart_symbol:
             chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
+            # Ensure market_data_df was loaded successfully before trying to access it
             if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
                  latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
                  if pd.notna(latest_price): st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
@@ -816,8 +817,8 @@ try:
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
         *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
         *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
-            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
-            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> indicates change.
+            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
+            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
             *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening.
         *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored.*
         *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
