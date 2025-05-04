@@ -1,6 +1,6 @@
-streamlit==1.45.0
-pandas==2.2.3
-requests==2.32.3
-numpy==2.2.5
-tzdata==2025.2
-alpha-vantage==2.3.1
+streamlit
+pandas
+requests
+numpy
+alpha-vantage
+plotly
