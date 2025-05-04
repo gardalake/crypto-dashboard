@@ -1,4 +1,4 @@
-# Versione: v17.2 - Password hardcoded (non da secrets)
+# Versione: v0.3 - Improve Signals (E), Add VWAP % Change (G)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -587,27 +587,32 @@ def calculate_sma_manual(series: pd.Series, period: int) -> float:
     return series.rolling(window=period, min_periods=period).mean().iloc[-1]
 
 
-def calculate_vwap_manual(df: pd.DataFrame, period: int = VWAP_PERIOD) -> float:
-    """Calcola l'ultimo valore del VWAP (Volume Weighted Average Price)."""
+def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> float:
+    """
+    Calcola il VWAP (Volume Weighted Average Price) per uno slice di DataFrame.
+    Assicura che lo slice contenga 'close' e 'volume'.
+    """
     required_cols = ['close', 'volume']
-    if not isinstance(df, pd.DataFrame) or df.empty or not all(col in df.columns for col in required_cols):
+    if not isinstance(df_slice, pd.DataFrame) or df_slice.empty or not all(col in df_slice.columns for col in required_cols):
         return np.nan
 
-    # Lavora solo con righe che hanno sia prezzo che volume validi
-    df_valid = df[required_cols].dropna()
-    if len(df_valid) < period:
+    # Lavora solo con righe che hanno sia prezzo che volume validi all'interno dello slice
+    df_valid_slice = df_slice[required_cols].dropna()
+    if len(df_valid_slice) < period:
+        # Non ci sono abbastanza dati VALIDI nello slice per calcolare il VWAP per il periodo richiesto
         return np.nan
 
-    # Seleziona l'ultimo periodo
-    df_period = df_valid.iloc[-period:]
+    # Assicurati di usare solo le ultime 'period' righe VALIDE dello slice
+    df_period = df_valid_slice.iloc[-period:]
+
     # Calcola (Prezzo * Volume) per il periodo
     pv = df_period['close'] * df_period['volume']
     # Calcola VWAP: Sum(PV) / Sum(Volume)
     total_volume = df_period['volume'].sum()
 
-    # Gestisci il caso in cui il volume totale sia zero
-    if total_volume == 0:
-        # Ritorna l'ultimo prezzo di chiusura se il volume è zero
+    # Gestisci il caso in cui il volume totale sia zero nel periodo
+    if total_volume == 0 or pd.isna(total_volume):
+        # Ritorna l'ultimo prezzo di chiusura dello slice se il volume è zero
         return df_period['close'].iloc[-1] if not df_period.empty else np.nan
 
     vwap = pv.sum() / total_volume
@@ -615,13 +620,12 @@ def calculate_vwap_manual(df: pd.DataFrame, period: int = VWAP_PERIOD) -> float:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     """Calcola tutti gli indicatori tecnici richiesti per una coin."""
-    # Rimosso hist_hourly_df perché non più usato
     indicators = {
         "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan,
         "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan,
         "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan,
         f"MA({MA_SHORT}d)": np.nan, f"MA({MA_LONG}d)": np.nan,
-        "VWAP (1d)": np.nan,
+        "VWAP (1d)": np.nan, "VWAP % Change (1d)": np.nan # Aggiunto VWAP % Change
     }
     # Lunghezze minime stimate per avere un valore valido (considerando periodi + smoothing)
     min_len_rsi_base = RSI_PERIOD + 1
@@ -630,10 +634,18 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     min_len_sma_short = MA_SHORT
     min_len_sma_long = MA_LONG
     min_len_vwap_base = VWAP_PERIOD
+    min_len_vwap_change = VWAP_PERIOD + 1 # Richiede almeno un giorno in più per il confronto
 
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
+        # Assicura che 'volume' esista, altrimenti VWAP non può essere calcolato
+        if 'volume' not in hist_daily_df.columns:
+            logger.warning(f"{symbol}: Colonna 'volume' mancante nei dati storici. VWAP non sarà calcolato.")
+            hist_daily_df['volume'] = np.nan # Aggiunge colonna NaN per evitare errori successivi
+
         close_daily = hist_daily_df['close'].dropna()
         len_daily = len(close_daily)
+        # Prepara DataFrame per VWAP (richiede 'close' e 'volume')
+        df_for_vwap = hist_daily_df[['close', 'volume']]
 
         # Calcola indicatori giornalieri se ci sono abbastanza dati
         if len_daily >= min_len_rsi_base:
@@ -661,20 +673,27 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
             indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
         else: logger.warning(f"{symbol}: Dati giornalieri insuff. ({len_daily}/{min_len_sma_long}) per MA({MA_LONG}d)")
 
-        # VWAP richiede il DataFrame con 'close' e 'volume'
-        if len_daily >= min_len_vwap_base and 'volume' in hist_daily_df.columns:
-             indicators["VWAP (1d)"] = calculate_vwap_manual(hist_daily_df.iloc[-len_daily:], VWAP_PERIOD) # Passa solo i dati validi usati per close_daily
-        elif 'volume' not in hist_daily_df.columns:
-             logger.warning(f"{symbol}: Colonna 'volume' mancante per VWAP(1d)")
-        else: logger.warning(f"{symbol}: Dati giornalieri insuff. ({len_daily}/{min_len_vwap_base}) per VWAP(1d)")
+        # Calcolo VWAP e % Change
+        if len(df_for_vwap) >= min_len_vwap_base: # Verifica lunghezza DataFrame originale per VWAP
+            indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
+            if len(df_for_vwap) >= min_len_vwap_change:
+                vwap_today = indicators["VWAP (1d)"]
+                vwap_yesterday = calculate_vwap_manual(df_for_vwap.iloc[-(VWAP_PERIOD + 1):-1], VWAP_PERIOD)
+                # Calcola % Change solo se entrambi i valori sono validi e ieri non è zero
+                if pd.notna(vwap_today) and pd.notna(vwap_yesterday) and vwap_yesterday != 0:
+                    indicators["VWAP % Change (1d)"] = ((vwap_today - vwap_yesterday) / vwap_yesterday) * 100
+                else:
+                    logger.warning(f"{symbol}: Impossibile calcolare VWAP % Change (vwap_today={vwap_today}, vwap_yesterday={vwap_yesterday})")
+            else:
+                logger.warning(f"{symbol}: Dati insuff. ({len(df_for_vwap)}/{min_len_vwap_change}) per VWAP % Change(1d)")
+        else:
+            logger.warning(f"{symbol}: Dati insuff. ({len(df_for_vwap)}/{min_len_vwap_base}) per VWAP(1d)")
 
 
         # Calcola indicatori Weekly/Monthly se ci sono abbastanza dati giornalieri e l'indice è datetime
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
             try: # Weekly RSI
-                # Resample a settimanale (inizio settimana Lunedì), prendendo l'ultimo valore della settimana
                 df_weekly = close_daily.resample('W-MON').last()
-                # Verifica se ci sono abbastanza settimane per calcolare l'RSI
                 if len(df_weekly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: Dati Weekly insuff. ({len(df_weekly.dropna())}/{min_len_rsi_base}) per RSI(1w)")
@@ -682,9 +701,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
                 logger.exception(f"{symbol}: Errore durante calcolo RSI weekly:")
 
             try: # Monthly RSI
-                # Resample a mensile (fine mese), prendendo l'ultimo valore del mese
                 df_monthly = close_daily.resample('ME').last()
-                # Verifica se ci sono abbastanza mesi per calcolare l'RSI
                 if len(df_monthly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
                 else: logger.warning(f"{symbol}: Dati Monthly insuff. ({len(df_monthly.dropna())}/{min_len_rsi_base}) per RSI(1mo)")
@@ -693,29 +710,31 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     else:
         logger.warning(f"{symbol}: Dati giornalieri (hist_daily_df) vuoti o mancanti per calcolo indicatori.")
 
-    # RSI 1h rimosso
     return indicators
 
-# --- Funzioni Segnale ---
+# --- Funzioni Segnale (Migliorate v0.3) ---
 
-def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, current_price):
-    """Genera un segnale basato su una combinazione di indicatori (stile 'GPT')."""
-    # RSI 1h non è più un input richiesto
-    required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, current_price]
-    # Se uno qualsiasi degli input *fondamentali* è NaN, ritorna N/D
+def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, vwap_1d, current_price):
+    """Genera un segnale basato su una combinazione di indicatori (stile 'GPT' - v0.3)."""
+    # Input fondamentali
+    required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, vwap_1d, current_price]
     if any(pd.isna(x) for x in required_inputs):
         return "⚪️ N/D"
 
     score = 0
     # Trend (MA Crossover e Prezzo vs MA Lunga)
-    if current_price > ma_long: score += 1
+    if current_price > ma_long: score += 1 # Prezzo sopra MA lunga (trend lungo)
     else: score -= 1
-    if ma_short > ma_long: score += 2 # Golden cross implicito
-    else: score -= 2 # Death cross implicito
+    if ma_short > ma_long: score += 2    # Golden cross (trend corto > lungo)
+    else: score -= 2                     # Death cross
+
+    # Trend (Prezzo vs VWAP)
+    if current_price > vwap_1d: score += 1 # Prezzo sopra VWAP (forza recente)
+    else: score -= 1                       # Prezzo sotto VWAP (debolezza recente)
 
     # Momentum (MACD Histogram)
     if macd_hist > 0: score += 2 # Momentum positivo
-    else: score -= 2 # Momentum negativo
+    else: score -= 2             # Momentum negativo
 
     # Oscillatore (RSI Daily)
     if rsi_1d < 30: score += 2 # Ipervenduto forte
@@ -725,51 +744,57 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, sr
 
     # Oscillatore (RSI Weekly - se disponibile)
     if pd.notna(rsi_1w):
-        if rsi_1w < 40: score += 1 # Debolezza anche su TF settimanale
-        elif rsi_1w > 60: score -= 1 # Forza anche su TF settimanale
+        if rsi_1w < 40: score += 1 # Debolezza TF lungo
+        elif rsi_1w > 60: score -= 1 # Forza TF lungo
 
     # Oscillatore (StochRSI Daily - se disponibile)
     if pd.notna(srsi_k) and pd.notna(srsi_d):
         if srsi_k < 20 and srsi_d < 20: score += 1 # Ipervenduto SRSI
         elif srsi_k > 80 and srsi_d > 80: score -= 1 # Ipercomprato SRSI
+        # Considera crossover K/D come segnale aggiuntivo (ma meno forte dei livelli estremi)
+        elif srsi_k > srsi_d: score += 0.5 # K sopra D (bullish)
+        elif srsi_k < srsi_d: score -= 0.5 # K sotto D (bearish)
 
-    # Mappatura Punteggio -> Segnale
-    if score >= 5: return "⚡️ Strong Buy"
-    elif score >= 2: return "🟢 Buy"
-    elif score <= -5: return "🚨 Strong Sell"
-    elif score <= -2: return "🔴 Sell"
+    # Mappatura Punteggio -> Segnale (Soglie leggermente riviste)
+    if score >= 5.5: return "⚡️ Strong Buy" # Soglia più alta per Strong Buy
+    elif score >= 2.5: return "🟢 Buy"
+    elif score <= -5.5: return "🚨 Strong Sell" # Soglia più bassa per Strong Sell
+    elif score <= -2.5: return "🔴 Sell"
     # Condizioni per Consider To Buy/Sell (CTB/CTS)
-    elif score > 0: # Tendenza leggermente rialzista o neutra-rialzista
-        # Consider To Buy se RSI non è troppo alto
-        return "⏳ CTB" if pd.notna(rsi_1d) and rsi_1d < 55 else "🟡 Hold"
-    else: # Tendenza leggermente ribassista o neutra-ribassista
-        # Consider To Sell se RSI non è troppo basso
-        return "⚠️ CTS" if pd.notna(rsi_1d) and rsi_1d > 45 else "🟡 Hold"
+    elif score > 0: # Tendenza generale positiva ma non forte
+        # Consider To Buy se RSI non è ancora alto e Prezzo sopra VWAP
+        return "⏳ CTB" if rsi_1d < 60 and current_price > vwap_1d else "🟡 Hold"
+    else: # Tendenza generale negativa ma non forte
+        # Consider To Sell se RSI non è ancora basso e Prezzo sotto VWAP
+        return "⚠️ CTS" if rsi_1d > 40 and current_price < vwap_1d else "🟡 Hold"
 
 
-def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d):
-    """Genera un alert basato su MA Crossover, MACD e RSI (stile 'Gemini')."""
+def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price):
+    """Genera un alert basato su MA Crossover, MACD, RSI e VWAP (stile 'Gemini' - v0.3)."""
     # Controlla se tutti gli input necessari sono validi
-    if pd.isna(ma_short) or pd.isna(ma_long) or pd.isna(macd_hist) or pd.isna(rsi_1d):
+    required_inputs = [ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price]
+    if any(pd.isna(x) for x in required_inputs):
         return "⚪️ N/D" # Non disponibile se manca qualche indicatore
 
-    # Condizioni per Strong Buy
-    is_uptrend_ma = ma_short > ma_long       # Golden cross MA
-    is_momentum_positive = macd_hist > 0     # Momentum rialzista
-    is_not_extremely_overbought = rsi_1d < 80 # Non eccessivamente ipercomprato
+    # Condizioni Base
+    is_uptrend_ma = ma_short > ma_long
+    is_downtrend_ma = ma_short < ma_long
+    is_momentum_positive = macd_hist > 0
+    is_momentum_negative = macd_hist < 0
+    is_not_extremely_overbought = rsi_1d < 80
+    is_not_extremely_oversold = rsi_1d > 20
+    is_price_above_vwap = current_price > vwap_1d
+    is_price_below_vwap = current_price < vwap_1d
 
-    # Condizioni per Strong Sell
-    is_downtrend_ma = ma_short < ma_long       # Death cross MA
-    is_momentum_negative = macd_hist < 0     # Momentum ribassista
-    is_not_extremely_oversold = rsi_1d > 20  # Non eccessivamente ipervenduto
-
-    # Logica Alert
-    if is_uptrend_ma and is_momentum_positive and is_not_extremely_overbought:
+    # Logica Alert (Aggiunta conferma VWAP)
+    # Strong Buy: Golden Cross MA, Momentum Positivo, Non estramamente ipercomprato, Prezzo sopra VWAP
+    if is_uptrend_ma and is_momentum_positive and is_not_extremely_overbought and is_price_above_vwap:
         return "⚡️ Strong Buy"
-    elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold:
+    # Strong Sell: Death Cross MA, Momentum Negativo, Non estremamente ipervenduto, Prezzo sotto VWAP
+    elif is_downtrend_ma and is_momentum_negative and is_not_extremely_oversold and is_price_below_vwap:
         return "🚨 Strong Sell"
     else:
-        # In tutti gli altri casi (condizioni miste o neutre)
+        # In tutti gli altri casi (condizioni miste, neutre o non confermate da VWAP)
         return "🟡 Hold"
 
 
@@ -955,8 +980,8 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
     if effective_num_coins != NUM_COINS:
         logger.warning(f"Numero coin ricevute da API ({effective_num_coins}) diverso da configurate ({NUM_COINS}). Processando {effective_num_coins}.")
 
-    # Stima tempo basata sulla pausa di 6s per chiamata storica (2 chiamate per coin: daily + hourly)
-    estimated_wait_secs = effective_num_coins * 2 * 6.0 # 2 chiamate (daily, hourly) * 6s pausa
+    # Stima tempo basata sulla pausa di 6s per chiamata storica (Ora solo 1 chiamata storica principale per coin)
+    estimated_wait_secs = effective_num_coins * 1 * 6.0 # 1 chiamata storica (daily) * 6s pausa
     estimated_wait_mins = estimated_wait_secs / 60
     spinner_msg = f"Recupero dati storici e calcolo indicatori per {effective_num_coins} crypto... (Richiede ~{estimated_wait_mins:.1f} min)"
 
@@ -992,30 +1017,31 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
                 change_30d = live_data.get('price_change_percentage_30d_in_currency', np.nan)
                 change_1y = live_data.get('price_change_percentage_1y_in_currency', np.nan)
 
-                # Recupera dati storici (Daily & Hourly) - con gestione errori e status
-                # Nota: L'hourly viene fetchato ma non usato in compute_all_indicators v17.1
+                # Recupera dati storici (Solo Daily ora è necessario per gli indicatori attuali)
                 hist_daily_df, status_daily = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY, interval='daily')
                 if status_daily != "Success":
                     fetch_errors_for_display.append(f"{symbol}: Storico Daily - {status_daily}") # Logga errore per UI
+                    # Se i dati giornalieri falliscono, non possiamo calcolare indicatori o segnali
+                    logger.warning(f"{symbol}: Impossibile calcolare indicatori a causa di errore fetch dati giornalieri.")
+                    indicators = {} # Dizionario vuoto per indicatori
+                    gpt_signal = "⚪️ N/D"
+                    gemini_alert = "⚪️ N/D"
+                else:
+                    # Calcola indicatori (passa solo il daily df)
+                    indicators = compute_all_indicators(symbol, hist_daily_df)
 
-                hist_hourly_df, status_hourly = get_coingecko_historical_data(coin_id, VS_CURRENCY, DAYS_HISTORY_HOURLY, interval='hourly')
-                if status_hourly != "Success":
-                    fetch_errors_for_display.append(f"{symbol}: Storico Hourly - {status_hourly}") # Logga errore per UI
-
-                # Calcola indicatori (passa solo il daily df)
-                indicators = compute_all_indicators(symbol, hist_daily_df)
-
-                # Genera segnali
-                gpt_signal = generate_gpt_signal(
-                    indicators.get("RSI (1d)"), indicators.get("RSI (1w)"),
-                    indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"),
-                    indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"),
-                    indicators.get("SRSI %D (1d)"), current_price
-                )
-                gemini_alert = generate_gemini_alert(
-                    indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"),
-                    indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)")
-                )
+                    # Genera segnali usando i nuovi indicatori (incluso VWAP)
+                    gpt_signal = generate_gpt_signal(
+                        indicators.get("RSI (1d)"), indicators.get("RSI (1w)"),
+                        indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"),
+                        indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"),
+                        indicators.get("SRSI %D (1d)"), indicators.get("VWAP (1d)"), current_price
+                    )
+                    gemini_alert = generate_gemini_alert(
+                        indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_LONG}d)"),
+                        indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"),
+                        indicators.get("VWAP (1d)"), current_price
+                    )
 
                 # Link a CoinGecko
                 coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}"
@@ -1035,10 +1061,11 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
                     f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"),
                     f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),
                     "VWAP (1d)": indicators.get("VWAP (1d)"),
+                    "VWAP % Change (1d)": indicators.get("VWAP % Change (1d)"), # Aggiunto
                     f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h,
                     "Link": coingecko_link
                 })
-                logger.info(f"--- Elaborazione {symbol} completata con successo. ---")
+                logger.info(f"--- Elaborazione {symbol} completata. ---") # Rimosso 'con successo' in caso di errori parziali
                 actual_processed_count += 1
 
             except Exception as coin_err:
@@ -1066,7 +1093,7 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
             df.set_index('Rank', inplace=True, drop=True)
             df.sort_index(inplace=True)
 
-            # Definisci l'ordine desiderato delle colonne
+            # Definisci l'ordine desiderato delle colonne (aggiornato con VWAP % Change)
             cols_order = [
                 "Symbol", "Name", "Gemini Alert", "GPT Signal",
                 f"Prezzo ({VS_CURRENCY.upper()})",
@@ -1074,7 +1101,8 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
                 "RSI (1d)", "RSI (1w)", "RSI (1mo)",
                 "SRSI %K (1d)", "SRSI %D (1d)",
                 "MACD Hist (1d)",
-                f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)", "VWAP (1d)",
+                f"MA({MA_SHORT}d)", f"MA({MA_LONG}d)",
+                "VWAP (1d)", "VWAP % Change (1d)", # Aggiunto VWAP % Change qui
                 f"Volume 24h ({VS_CURRENCY.upper()})",
                 "Link"
             ]
@@ -1086,10 +1114,10 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
             formatters = {}
             currency_col = f"Prezzo ({VS_CURRENCY.upper()})"
             volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
-            pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y"]
+            pct_cols = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP % Change (1d)"] # Aggiunto VWAP % Change ai PCT
             rsi_srsi_cols = [col for col in df_display.columns if ("RSI" in col or "SRSI" in col)]
             macd_cols = [col for col in df_display.columns if "MACD" in col]
-            ma_vwap_cols = [col for col in df_display.columns if "MA" in col or "VWAP" in col]
+            ma_vwap_cols = [col for col in df_display.columns if ("MA" in col or "VWAP" in col) and "% Change" not in col] # Esclude VWAP % Change
 
             if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}" # Prezzo con 4 decimali
             if volume_col in df_display.columns: formatters[volume_col] = lambda x: f"${format_large_number(x)}" # Volume formattato
@@ -1128,9 +1156,11 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
                 return f'{style} font-weight: {font_weight};'
 
             # Applica stili condizionali alle colonne appropriate
+            # Applica lo stile PCT a tutte le colonne % incluse VWAP % Change
             cols_for_pct_style = [col for col in pct_cols if col in df_display.columns]
             if cols_for_pct_style:
                 styled_df = styled_df.applymap(highlight_pct_col_style, subset=cols_for_pct_style)
+
             if "Gemini Alert" in df_display.columns:
                 styled_df = styled_df.applymap(highlight_signal_style, subset=["Gemini Alert"])
             if "GPT Signal" in df_display.columns:
@@ -1178,7 +1208,7 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
     # --- LEGENDA ---
     st.divider()
     with st.expander("📘 Legenda Indicatori Tecnici e Segnali", expanded=False):
-        # Markdown multiline per leggibilità
+        # Markdown multiline per leggibilità (Aggiornato con VWAP % Change)
         st.markdown("""
         *Disclaimer: Questa dashboard è fornita solo a scopo informativo e didattico e non costituisce in alcun modo consulenza finanziaria.*
 
@@ -1191,22 +1221,23 @@ try: # Blocco try principale per catturare errori imprevisti nell'app
 
         **Tabella Analisi Tecnica Crypto:**
         *   **Rank:** Posizione della coin per capitalizzazione di mercato (Fonte: CoinGecko).
-        *   **Gemini Alert / GPT Signal:** Segnali **esemplificativi e sperimentali** generati automaticamente sulla base di indicatori tecnici. **NON sono raccomandazioni di trading.** Usare con estrema cautela e fare sempre le proprie ricerche (DYOR).
+        *   **Gemini Alert / GPT Signal:** Segnali **esemplificativi e sperimentali** generati automaticamente sulla base di indicatori tecnici. **NON sono raccomandazioni di trading.** Usare con estrema cautela e fare sempre le proprie ricerche (DYOR). Logica aggiornata in v0.3 per includere VWAP e raffinare condizioni.
             *   ⚡️ Strong Buy / 🟢 Buy: Condizioni tecniche potenzialmente rialziste.
             *   🚨 Strong Sell / 🔴 Sell: Condizioni tecniche potenzialmente ribassiste.
             *   🟡 Hold: Condizioni neutre o miste.
-            *   ⏳ CTB (Consider To Buy): Tendenza potenzialmente rialzista, ma da monitorare.
-            *   ⚠️ CTS (Consider To Sell): Tendenza potenzialmente ribassista, ma da monitorare.
+            *   ⏳ CTB (Consider To Buy): Tendenza potenzialmente rialzista, ma da monitorare attentamente.
+            *   ⚠️ CTS (Consider To Sell): Tendenza potenzialmente ribassista, ma da monitorare attentamente.
             *   ⚪️ N/D: Segnale non disponibile (dati insufficienti).
         *   **Prezzo:** Prezzo corrente della coin nella valuta selezionata (USD) (Fonte: CoinGecko).
         *   **% 1h, 24h, 7d, 30d, 1y:** Variazioni percentuali del prezzo su diversi intervalli temporali (Fonte: CoinGecko).
         *   **Indicatori Momentum (Oscillatori):**
-            *   **RSI (1d, 1w, 1mo):** Relative Strength Index su timeframe giornaliero, settimanale, mensile. Misura la velocità e il cambiamento dei movimenti di prezzo. Valori < 30 indicano ipervenduto, > 70 ipercomprato (ma i livelli possono variare).
-            *   **SRSI %K / %D (1d):** Stochastic RSI. Oscillatore applicato all'RSI per identificare condizioni di ipercomprato/ipervenduto più sensibili. Valori < 20 ipervenduto, > 80 ipercomprato.
+            *   **RSI (1d, 1w, 1mo):** Relative Strength Index su timeframe giornaliero, settimanale, mensile. Misura la velocità e il cambiamento dei movimenti di prezzo. Valori < 30-40 indicano potenziale ipervenduto, > 60-70 potenziale ipercomprato.
+            *   **SRSI %K / %D (1d):** Stochastic RSI. Oscillatore applicato all'RSI per identificare condizioni di ipercomprato/ipervenduto più sensibili. Valori < 20 ipervenduto, > 80 ipercomprato. Crossover K/D può dare segnali aggiuntivi.
             *   **MACD Hist (1d):** Moving Average Convergence Divergence Histogram. Differenza tra la linea MACD e la linea segnale. Barre sopra lo zero indicano momentum rialzista, sotto lo zero momentum ribassista.
         *   **Indicatori Trend:**
-            *   **MA(20d) / MA(50d):** Medie Mobili Semplici (Simple Moving Averages) a 20 e 50 giorni. Aiutano a identificare la direzione del trend. Incroci (es. MA20 > MA50) possono generare segnali.
-            *   **VWAP (1d):** Volume Weighted Average Price (calcolato su 14 periodi giornalieri). Prezzo medio ponderato per il volume. Usato spesso come riferimento intraday, qui calcolato su base giornaliera.
+            *   **MA(20d) / MA(50d):** Medie Mobili Semplici (Simple Moving Averages) a 20 e 50 giorni. Aiutano a identificare la direzione del trend. Incroci (es. MA20 > MA50 'Golden Cross') possono generare segnali.
+            *   **VWAP (1d):** Volume Weighted Average Price (calcolato su 14 periodi giornalieri). Prezzo medio ponderato per il volume. Spesso usato come livello di riferimento; Prezzo > VWAP può indicare forza, Prezzo < VWAP debolezza.
+            *   **VWAP % Change (1d):** Variazione percentuale del VWAP(1d) rispetto al giorno precedente. Indica se il 'prezzo medio ponderato per volume' sta salendo o scendendo.
         *   **Volume 24h:** Volume totale scambiato nelle ultime 24 ore (Fonte: CoinGecko).
         *   **Link:** Collegamento diretto alla pagina della coin su CoinGecko.
         *   **N/A:** Dato non disponibile (es. dati storici insufficienti, errore API, indicatore non calcolabile).
