@@ -1,4 +1,4 @@
-# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 2
+# Versione: v0.5 - Remove pandas-ta, Manual Chart Indicators (SMA, RSI) - Syntax Fix 3
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -330,7 +330,6 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
             try: # Weekly RSI
                 df_weekly = close_daily.resample('W-MON').last()
-                # *** INDENTAZIONE CORRETTA QUI ***
                 if len(df_weekly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD)
                 else:
@@ -340,7 +339,6 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 
             try: # Monthly RSI
                 df_monthly = close_daily.resample('ME').last()
-                 # *** INDENTAZIONE CORRETTA QUI ***
                 if len(df_monthly.dropna()) >= min_len_rsi_base:
                     indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD)
                 else:
@@ -351,27 +349,48 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         logger.warning(f"{symbol}: TAB: Dati giornalieri vuoti per calcolo indicatori.")
     return indicators
 
-
-# --- Funzioni Segnale (v0.3 Logic) ---
+# --- Funzioni Segnale (v0.3 Logic - Correct Syntax) ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_long, srsi_k, srsi_d, vwap_1d, current_price):
-    required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, vwap_1d, current_price];
+    """Genera un segnale basato su una combinazione di indicatori (stile 'GPT' - v0.3 Logic - Correct Syntax)."""
+    required_inputs = [rsi_1d, macd_hist, ma_short, ma_long, vwap_1d, current_price]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/D"
-    score = 0;
-    if current_price > ma_long: score += 1; else: score -= 1
-    if ma_short > ma_long: score += 2; else: score -= 2
-    if current_price > vwap_1d: score += 1; else: score -= 1
-    if macd_hist > 0: score += 2; else: score -= 2
-    if rsi_1d < 30: score += 2; elif rsi_1d < 40: score += 1; elif rsi_1d > 70: score -= 2; elif rsi_1d > 60: score -= 1
+    score = 0
+    # Trend (MA Crossover e Prezzo vs MA Lunga)
+    if current_price > ma_long: score += 1
+    else: score -= 1
+    if ma_short > ma_long: score += 2
+    else: score -= 2
+    # Trend (Prezzo vs VWAP)
+    if current_price > vwap_1d: score += 1
+    else: score -= 1
+    # Momentum (MACD Histogram)
+    if macd_hist > 0: score += 2
+    else: score -= 2
+    # Oscillatore (RSI Daily)
+    if rsi_1d < 30: score += 2
+    elif rsi_1d < 40: score += 1
+    elif rsi_1d > 70: score -= 2
+    elif rsi_1d > 60: score -= 1
+    # Oscillatore (RSI Weekly - se disponibile)
     if pd.notna(rsi_1w):
-        if rsi_1w < 40: score += 1; elif rsi_1w > 60: score -= 1
+        if rsi_1w < 40: score += 1
+        elif rsi_1w > 60: score -= 1
+    # Oscillatore (StochRSI Daily - se disponibile)
     if pd.notna(srsi_k) and pd.notna(srsi_d):
-        if srsi_k < 20 and srsi_d < 20: score += 1; elif srsi_k > 80 and srsi_d > 80: score -= 1
-        elif srsi_k > srsi_d: score += 0.5; elif srsi_k < srsi_d: score -= 0.5
-    if score >= 5.5: return "⚡️ Strong Buy"; elif score >= 2.5: return "🟢 Buy"; elif score <= -5.5: return "🚨 Strong Sell"; elif score <= -2.5: return "🔴 Sell"
+        if srsi_k < 20 and srsi_d < 20: score += 1
+        elif srsi_k > 80 and srsi_d > 80: score -= 1
+        elif srsi_k > srsi_d: score += 0.5
+        elif srsi_k < srsi_d: score -= 0.5
+    # Mappatura Punteggio -> Segnale
+    if score >= 5.5: return "⚡️ Strong Buy"
+    elif score >= 2.5: return "🟢 Buy"
+    elif score <= -5.5: return "🚨 Strong Sell"
+    elif score <= -2.5: return "🔴 Sell"
     elif score > 0: return "⏳ CTB" if rsi_1d < 60 and current_price > vwap_1d else "🟡 Hold"
     else: return "⚠️ CTS" if rsi_1d > 40 and current_price < vwap_1d else "🟡 Hold"
 
 def generate_gemini_alert(ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price):
+    """Genera un alert basato su MA Crossover, MACD, RSI e VWAP (stile 'Gemini' - v0.3 Logic)."""
     required_inputs = [ma_short, ma_long, macd_hist, rsi_1d, vwap_1d, current_price];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/D"
     is_uptrend_ma = ma_short > ma_long; is_downtrend_ma = ma_short < ma_long; is_momentum_positive = macd_hist > 0; is_momentum_negative = macd_hist < 0
