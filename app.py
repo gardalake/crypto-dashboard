@@ -1,4 +1,4 @@
-# Version: v1.2 - Remove Heuristic, Add MA30/BBands, Refine Signals, Styling Fixes
+# Version: v1.3 - Simplified SRSI Styling (Cell-wise OB/OS), Keep v1.1 features
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -17,7 +17,7 @@ import io
 log_stream = io.StringIO()
 logging.basicConfig(
     stream=log_stream,
-    level=logging.INFO, # Set to INFO for production, DEBUG for development
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     force=True
@@ -82,7 +82,7 @@ MACD_SIGNAL = 9
 MA_SHORT = 7
 MA_MEDIUM = 20
 MA_LONG = 50
-MA_XLONG = 30 # Added new MA period
+MA_XLONG = 30 # Re-check if used - seems not used, maybe remove later
 BB_PERIOD = 20
 BB_STD_DEV = 2.0
 VWAP_PERIOD = 14
@@ -334,9 +334,10 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     """Calculates all technical indicators (last value) for the table."""
-    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
+    # Added MA_XLONG (30d) key
+    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5;
-    min_len_sma_short = MA_SHORT; min_len_sma_medium = MA_MEDIUM; min_len_sma_long = MA_LONG; min_len_bb = BB_PERIOD + 1;
+    min_len_sma_short = MA_SHORT; min_len_sma_medium = MA_MEDIUM; min_len_sma_xlong = MA_XLONG; min_len_sma_long = MA_LONG; min_len_bb = BB_PERIOD + 1;
     min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
 
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
@@ -349,16 +350,21 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_srsi_base}) for SRSI(1d)")
         if len_daily >= min_len_macd_base: macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL); indicators["MACD Line (1d)"] = macd_l; indicators["MACD Signal (1d)"] = macd_s; indicators["MACD Hist (1d)"] = macd_h
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_macd_base}) for MACD(1d)")
+        # MAs
         if len_daily >= min_len_sma_short: indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_short}) for MA({MA_SHORT}d)")
         if len_daily >= min_len_sma_medium: indicators[f"MA({MA_MEDIUM}d)"] = calculate_sma_manual(close_daily, MA_MEDIUM)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_medium}) for MA({MA_MEDIUM}d)")
+        if len_daily >= min_len_sma_xlong: indicators[f"MA({MA_XLONG}d)"] = calculate_sma_manual(close_daily, MA_XLONG) # Calculate MA_XLONG
+        else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_xlong}) for MA({MA_XLONG}d)")
         if len_daily >= min_len_sma_long: indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_long}) for MA({MA_LONG}d)")
+        # BBands
         if len_daily >= min_len_bb:
              bb_mid, bb_up, bb_low, bb_pct_b, bb_width, bb_width_chg = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV)
              indicators["BB %B"] = bb_pct_b; indicators["BB Width"] = bb_width; indicators["BB Width %Chg"] = bb_width_chg
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_bb}) for Bollinger Bands")
+        # VWAP
         if len(df_for_vwap) >= min_len_vwap_base:
             indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
             if len(df_for_vwap) >= min_len_vwap_change:
@@ -385,6 +391,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 # --- Signal Functions (Refined v1.1) ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
     """Generates a signal using more indicators ('GPT' style v1.1)."""
+    # MA_XLONG (30d) is calculated but not explicitly used in signals yet, could be added
     required_inputs = [ rsi_1d, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price ]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     score = 0
@@ -437,6 +444,7 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     if is_ma_cross_bullish and is_momentum_positive and is_price_confirm_bullish and is_rsi_ok_bullish: return "⚡️ Strong Buy"
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
+
 
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
@@ -620,7 +628,7 @@ try:
                     "RSI (1d)", "RSI (1w)", "RSI (1mo)",
                     "SRSI %K (1d)", "SRSI %D (1d)",
                     "MACD Hist (1d)",
-                    f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_LONG}d)",
+                    f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_LONG}d)", f"MA({MA_XLONG}d)", # Add MA30
                     "BB %B", "BB Width", "BB Width %Chg",
                     "VWAP (1d)", "VWAP %",
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
@@ -664,15 +672,12 @@ try:
                     else: return ''
 
                 def style_stoch_rsi(row):
-                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings FOR THE SUBSET."""
+                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings"""
+                    # Input 'row' here is expected to be the original numeric row for logic
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
-                    # Access original numeric data from the base df (table_results_df) using the row's name (index)
-                    original_row_index = row.name
-                    if original_row_index not in table_results_df.index: return pd.Series('', index=row.index)
-
-                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
-                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
+                    k_val_num = row[k_col] if k_col in row.index else np.nan
+                    d_val_num = row[d_col] if d_col in row.index else np.nan
 
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
@@ -682,11 +687,9 @@ try:
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
 
-                    # Return a Series *with the same index as the input row_subset* containing only the styles for the subset columns
-                    styles = pd.Series('', index=row.index)
-                    if k_col in styles.index: styles[k_col] = style_k
-                    if d_col in styles.index: styles[d_col] = style_d
-                    return styles
+                    # Return styles ONLY for the subset columns expected by .apply(..., subset=...)
+                    return pd.Series([style_k, style_d], index=["SRSI %K (1d)", "SRSI %D (1d)"])
+
 
                 # --- Define Formatters ---
                 formatters = {}
@@ -715,6 +718,7 @@ try:
                 # --- Apply Styles THEN Formatting ---
                 styled_table = df_display.style
 
+                # Apply cell-wise styles using .map
                 cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
                 if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
 
@@ -727,11 +731,12 @@ try:
 
                 if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
 
+                # Apply row-wise styling for SRSI *WITH subset*
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
-                     # Pass the original dataframe for numeric checks, apply to subset
-                     styled_table = styled_table.apply(lambda row: style_stoch_rsi(table_results_df.loc[row.name]), axis=1, subset=srsi_value_cols)
+                     # Pass the *original* dataframe for lookup inside the function
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
                 # Apply formatting LAST
                 styled_table = styled_table.format(formatters, na_rep="N/A", precision=4)
@@ -802,7 +807,7 @@ try:
         *   **MACD Hist (1d):** MACD Histogram.
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
-        *   **MA(7d/20d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
+        *   **MA(7d/20d/30d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
         *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
             *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
             *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
