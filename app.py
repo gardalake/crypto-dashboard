@@ -1,4 +1,4 @@
-# Version: v1.3 - Final Styler Attempt: Format to string then apply styles, render HTML
+# Version: v1.4 - Removed Detailed Coin Chart, Keep v1.2 fixes
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -6,8 +6,8 @@ import requests
 import numpy as np
 from datetime import datetime, timedelta
 import time
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import plotly.graph_objects as go # Still needed if we add charts later
+from plotly.subplots import make_subplots # Still needed if we add charts later
 from alpha_vantage.timeseries import TimeSeries
 import logging
 import io
@@ -53,7 +53,7 @@ logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Traditional tickers configured (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"
-CACHE_TTL, CACHE_HIST_TTL, CACHE_CHART_TTL, CACHE_TRAD_TTL = 1800, 3600, 1800, 14400
+CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # Removed CACHE_CHART_TTL
 DAYS_HISTORY_DAILY, DAYS_HISTORY_HOURLY = 365, 7
 RSI_PERIOD, RSI_OB, RSI_OS = 14, 70.0, 30.0
 SRSI_PERIOD, SRSI_K, SRSI_D, SRSI_OB, SRSI_OS = 14, 3, 3, 80.0, 20.0
@@ -63,8 +63,7 @@ BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info("Finished global configuration.")
 
-# --- FUNCTION DEFINITIONS (General) ---
-
+# --- FUNCTION DEFINITIONS ---
 def check_password():
     logger.debug("Executing check_password.")
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
@@ -112,34 +111,9 @@ def get_coingecko_market_data(ids_list, currency):
     except requests.exceptions.RequestException as req_ex: logger.error(f"Request Error CoinGecko Market API: {req_ex}"); st.error(f"Request Error CoinGecko Market API: {req_ex}"); return pd.DataFrame(), timestamp_utc
     except Exception as e: logger.exception("Error Processing CoinGecko Market Data:"); st.error(f"Error Processing CoinGecko Market Data: {e}"); return pd.DataFrame(), timestamp_utc
 
-@st.cache_data(ttl=CACHE_CHART_TTL, show_spinner=False)
-def get_coingecko_historical_data_for_chart(coin_id, currency, days):
-    logger.debug(f"CHART: Starting historical fetch for {coin_id} (daily, {days}d)."); url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {'vs_currency': currency, 'days': str(days), 'interval': 'daily', 'precision': 'full'}; status_msg = f"Unknown Error ({coin_id}, daily chart)"
-    try:
-        logger.debug(f"CHART: Requesting URL: {url} with params: {params}"); response = requests.get(url, params=params, timeout=25); response.raise_for_status(); data = response.json()
-        if not data or 'prices' not in data or not data['prices']: status_msg = f"No Prices Data ({coin_id}, daily chart)"; logger.warning(status_msg); return pd.DataFrame(), status_msg
-        prices_df = pd.DataFrame(data['prices'], columns=['timestamp', 'close']); prices_df['timestamp'] = pd.to_datetime(prices_df['timestamp'], unit='ms', utc=True); prices_df.set_index('timestamp', inplace=True); hist_df = prices_df
-        if 'total_volumes' in data and data['total_volumes']:
-            volumes_df = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'volume']); volumes_df['timestamp'] = pd.to_datetime(volumes_df['timestamp'], unit='ms', utc=True); volumes_df.set_index('timestamp', inplace=True); hist_df = prices_df.join(volumes_df, how='outer')
-        else: hist_df['volume'] = 0.0
-        hist_df = hist_df.interpolate(method='time').ffill().bfill(); hist_df['high'] = hist_df['close']; hist_df['low'] = hist_df['close']; hist_df['open'] = hist_df['close'].shift(1)
-        if not hist_df.empty: hist_df.loc[hist_df.index[0], 'open'] = hist_df['close'].iloc[0]
-        hist_df = hist_df[~hist_df.index.duplicated(keep='last')].sort_index(); hist_df.dropna(subset=['close'], inplace=True)
-        if hist_df.empty: status_msg = f"Processed Empty ({coin_id}, daily chart)"; logger.warning(status_msg); return pd.DataFrame(), status_msg
-        status_msg = "Success"; logger.info(f"CHART: Historical data fetched for {coin_id} (daily), {len(hist_df)} rows.")
-        return_cols = ['open', 'high', 'low', 'close', 'volume']; hist_df_final = hist_df[[col for col in return_cols if col in hist_df.columns]]; return hist_df_final, status_msg
-    except requests.exceptions.HTTPError as http_err:
-        status_code = http_err.response.status_code;
-        if status_code == 429: status_msg = f"Rate Limited (429) ({coin_id}, daily chart)"
-        elif status_code == 404: status_msg = f"Not Found (404) ({coin_id}, daily chart)"
-        else: status_msg = f"HTTP Error {status_code} ({coin_id}, daily chart)"
-        logger.warning(f"CHART: HTTP Error CoinGecko History API: {status_msg}"); return pd.DataFrame(), status_msg
-    except requests.exceptions.RequestException as req_ex: status_msg = f"Request Error ({req_ex}) ({coin_id}, daily chart)"; logger.error(f"CHART: Request Error CoinGecko History API: {status_msg}"); return pd.DataFrame(), status_msg
-    except Exception as e: status_msg = f"Generic Error ({type(e).__name__}) ({coin_id}, daily chart)"; logger.exception(f"CHART: Error processing CoinGecko History API for {coin_id}:"); return pd.DataFrame(), status_msg
-
-@st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
+@st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False) # Using CACHE_HIST_TTL as it's for the table
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
+    """Fetches historical data from CoinGecko with delay (for table indicators)."""
     logger.debug(f"TABLE: Starting historical fetch for {coin_id} ({interval}), 6s delay..."); time.sleep(6.0); logger.debug(f"TABLE: Delay ended for {coin_id} ({interval}), starting API call.")
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
     status_msg = f"Unknown Error ({coin_id}, {interval})"
@@ -587,7 +561,9 @@ try:
         if results:
             logger.info(f"Creating final table DataFrame with {len(results)} results.");
             try:
-                table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
+                table_results_df = pd.DataFrame(results)
+                table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce')
+                table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
                 cols_order = [
                     "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score",
                     f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y",
@@ -602,7 +578,7 @@ try:
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
                 df_display = table_results_df[cols_to_show].copy() # Data to be styled
 
-                # --- Styling Functions (Return CSS Strings) ---
+                # --- Styling Functions (Return CSS Strings ONLY) ---
                 def highlight_signal_style(val):
                     style = 'color: #6c757d; font-weight: normal;';
                     if isinstance(val, str):
@@ -614,11 +590,11 @@ try:
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): style = 'color: #adb5bd;' # Handle NaN input
+                    elif pd.isna(val): style = 'color: #adb5bd;'
                     return style
 
                 def highlight_pct_col_style(val):
-                    if pd.isna(val) or not isinstance(val, (int, float)): return '' # No style for NaN or non-numeric
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
@@ -633,19 +609,14 @@ try:
                     elif val < 0: return 'color: red;'
                     else: return ''
 
-                def style_stoch_rsi(row_subset): # Expects a Series with 2 elements (K and D)
-                    k_col_name = "SRSI %K (1d)" # Name of K col in the original DataFrame
-                    d_col_name = "SRSI %D (1d)" # Name of D col in the original DataFrame
+                def style_stoch_rsi(row_subset):
+                    k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k_css = default_style; style_d_css = default_style
-
-                    # Get original numeric values from the main DataFrame using the row's index
                     original_row_index = row_subset.name
                     if original_row_index not in table_results_df.index:
-                        return pd.Series([default_style, default_style], index=row_subset.index)
-
-                    k_val_num = table_results_df.loc[original_row_index, k_col_name]
-                    d_val_num = table_results_df.loc[original_row_index, d_col_name]
-
+                         return pd.Series([default_style, default_style], index=row_subset.index)
+                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
+                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
@@ -653,54 +624,55 @@ try:
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k_css = style_str; style_d_css = style_str
-                    
-                    # The Series returned must match the columns in the subset
                     return pd.Series([style_k_css, style_d_css], index=row_subset.index)
 
 
-                # --- Apply Styles THEN Formatting ---
-                styled_table = df_display.style
-
-                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
-                signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
-                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"] # The actual column names from df_display
-                macd_hist_col = ["MACD Hist (1d)"]
-
-                # Apply cell-wise styles using .map
-                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
-                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
-                for col in signal_cols:
-                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
-                rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
-                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
-                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
-
-                # Apply row-wise styling for SRSI
-                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
-                if srsi_cols_exist:
-                     logger.debug("Applying SRSI row-wise styling.")
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
-
                 # --- Define Formatters ---
                 formatters = {}
-                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                currency_col = f"Price ({VS_CURRENCY.upper()})"
+                volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
+                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
+                macd_hist_col = ["MACD Hist (1d)"]
                 ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
 
                 if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
                 if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
-                for col in pct_cols_all: # Format all percent columns (except 1h handled below)
+                for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
-                def format_1h_with_icon(val): # Special formatter for % 1h
+                def format_1h_with_icon(val):
                     if pd.isna(val): return "N/A"
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
                     return f"{icon}{val:+.2f}%"
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
-                for col in rsi_cols_list + srsi_value_cols: # Format RSI & SRSI values
+                for col in rsi_cols_list + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = "{:.1f}"
-                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign
-                for col in ma_vwap_cols: # Format MAs/VWAP
+                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
+                for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
+
+                # --- Apply Styles THEN Formatting ---
+                styled_table = df_display.style
+
+                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
+                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
+
+                signal_cols_to_style = ["MA/MACD Cross Alert", "Composite Score"]
+                for col in signal_cols_to_style:
+                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
+
+                rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
+                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
+
+                if macd_hist_col[0] in df_display.columns and macd_hist_col[0] in df_display: # Ensure column exists
+                     styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
+
+
+                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
+                if srsi_cols_exist:
+                     logger.debug("Applying SRSI row-wise styling.")
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
                 # Apply formatting LAST
                 styled_table = styled_table.format(formatters, na_rep="N/A")
