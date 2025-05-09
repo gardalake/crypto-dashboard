@@ -1,4 +1,4 @@
-# Version: v1.4 - Removed Detailed Coin Chart, Keep v1.2 fixes
+# Version: v1.4 - Chart Section Fully Removed, Styler Fixes from v1.3 (Take 2)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -6,8 +6,8 @@ import requests
 import numpy as np
 from datetime import datetime, timedelta
 import time
-import plotly.graph_objects as go # Still needed if we add charts later
-from plotly.subplots import make_subplots # Still needed if we add charts later
+# import plotly.graph_objects as go # No longer needed for main app
+# from plotly.subplots import make_subplots # No longer needed for main app
 from alpha_vantage.timeseries import TimeSeries
 import logging
 import io
@@ -53,7 +53,7 @@ logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Traditional tickers configured (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"
-CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # Removed CACHE_CHART_TTL
+CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # CACHE_CHART_TTL removed
 DAYS_HISTORY_DAILY, DAYS_HISTORY_HOURLY = 365, 7
 RSI_PERIOD, RSI_OB, RSI_OS = 14, 70.0, 30.0
 SRSI_PERIOD, SRSI_K, SRSI_D, SRSI_OB, SRSI_OS = 14, 3, 3, 80.0, 20.0
@@ -63,7 +63,7 @@ BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info("Finished global configuration.")
 
-# --- FUNCTION DEFINITIONS ---
+# --- FUNCTION DEFINITIONS (General) ---
 def check_password():
     logger.debug("Executing check_password.")
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
@@ -111,9 +111,8 @@ def get_coingecko_market_data(ids_list, currency):
     except requests.exceptions.RequestException as req_ex: logger.error(f"Request Error CoinGecko Market API: {req_ex}"); st.error(f"Request Error CoinGecko Market API: {req_ex}"); return pd.DataFrame(), timestamp_utc
     except Exception as e: logger.exception("Error Processing CoinGecko Market Data:"); st.error(f"Error Processing CoinGecko Market Data: {e}"); return pd.DataFrame(), timestamp_utc
 
-@st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False) # Using CACHE_HIST_TTL as it's for the table
+@st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    """Fetches historical data from CoinGecko with delay (for table indicators)."""
     logger.debug(f"TABLE: Starting historical fetch for {coin_id} ({interval}), 6s delay..."); time.sleep(6.0); logger.debug(f"TABLE: Delay ended for {coin_id} ({interval}), starting API call.")
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
     status_msg = f"Unknown Error ({coin_id}, {interval})"
@@ -254,7 +253,6 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
     return vwap
 
 def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV) -> tuple[float, float, float, float, float, float]:
-    """Calculates the last values for BBands: Mid, Upper, Lower, %B, Width, Width Change."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     series = series.dropna(); min_len_bb_change = period + 1
     if len(series) >= period:
@@ -385,7 +383,6 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     elif is_ma_cross_bearish and is_momentum_negative and is_price_confirm_bearish and is_rsi_ok_bearish: return "🚨 Strong Sell"
     else: return "🟡 Hold"
 
-
 # --- Chart Indicator Calculation Functions (Manual) ---
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
     """Calculates SMA for the entire series."""
@@ -403,46 +400,8 @@ def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Seri
     rsi.loc[avg_loss == 0] = 100.0; rsi = rsi.clip(0, 100)
     return rsi.reindex(series.index)
 
-
-# --- Chart Creation Function ---
-def create_coin_chart(df, symbol):
-    """Creates Plotly chart with Candlestick, MA, and RSI."""
-    logger.info(f"CHART: Creating chart for {symbol} with {len(df)} rows.")
-    required_ohlc = ['open', 'high', 'low', 'close'];
-    if df.empty or not all(col in df.columns for col in required_ohlc): logger.warning(f"CHART: Empty DataFrame or missing OHLC for {symbol}. Columns: {df.columns.tolist()}"); return None
-    if not pd.api.types.is_datetime64_any_dtype(df.index):
-        logger.warning(f"CHART: Index is not Datetime for {symbol}. Attempting conversion.");
-        try: df.index = pd.to_datetime(df.index)
-        except Exception as e: logger.error(f"CHART: Failed to convert index to Datetime for {symbol}: {e}"); return None
-
-    # Calculate indicators using manual functions
-    try:
-        logger.debug(f"CHART: Calculating manual indicators (SMA, RSI) for {symbol}.")
-        close_series = df['close'].dropna()
-        if close_series.empty: raise ValueError("'close' series is empty after dropna()")
-        df['MA_Medium'] = calculate_sma_series(close_series, MA_MEDIUM).reindex(df.index)
-        df['MA_Long'] = calculate_sma_series(close_series, MA_LONG).reindex(df.index)
-        df['RSI'] = calculate_rsi_series(close_series, RSI_PERIOD).reindex(df.index)
-        logger.debug(f"CHART: Columns after manual calculations: {df.columns.tolist()}")
-    except Exception as calc_err:
-        logger.exception(f"CHART: Error during manual indicator calculation for {symbol}:")
-        st.warning(f"Could not calculate indicators for {symbol} chart: {calc_err}")
-        return None
-
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-    fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=f'{symbol} Price (Daily)', increasing_line_color= 'green', decreasing_line_color= 'red'), row=1, col=1)
-    if 'MA_Medium' in df.columns and df['MA_Medium'].notna().any(): fig.add_trace(go.Scatter(x=df.index, y=df['MA_Medium'], mode='lines', line=dict(color='blue', width=1), name=f'MA({MA_MEDIUM}d)'), row=1, col=1)
-    else: logger.warning(f"CHART: MA_Medium column not found or empty for {symbol}")
-    if 'MA_Long' in df.columns and df['MA_Long'].notna().any(): fig.add_trace(go.Scatter(x=df.index, y=df['MA_Long'], mode='lines', line=dict(color='orange', width=1), name=f'MA({MA_LONG}d)'), row=1, col=1)
-    else: logger.warning(f"CHART: MA_Long column not found or empty for {symbol}")
-    if 'RSI' in df.columns and df['RSI'].notna().any():
-        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', line=dict(color='purple', width=1), name='RSI (14d)'), row=2, col=1)
-        fig.add_hline(y=RSI_OB, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
-        fig.add_hline(y=RSI_OS, line_dash="dash", line_color="green", line_width=1, row=2, col=1)
-        fig.update_yaxes(range=[0, 100], row=2, col=1)
-    else: logger.warning(f"CHART: RSI column not found or empty for {symbol}"); fig.update_yaxes(title_text='RSI N/A', row=2, col=1)
-    fig.update_layout(title=f'{symbol}/{VS_CURRENCY.upper()} Daily Technical Analysis', xaxis_title=None, yaxis_title=f'Price ({VS_CURRENCY.upper()})', yaxis2_title='RSI', xaxis_rangeslider_visible=False, legend_title_text='Indicators', height=600, margin=dict(l=50, r=50, t=50, b=50), hovermode="x unified" )
-    fig.update_yaxes(autorange=True, row=1, col=1); logger.info(f"CHART: Plotly chart created for {symbol}."); return fig
+# --- Chart Creation Function (REMOVED for v1.4) ---
+# def create_coin_chart(df, symbol): ...
 
 # --- START OF MAIN APP EXECUTION ---
 logger.info("Starting main UI execution.")
@@ -461,7 +420,7 @@ try:
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
 
     last_update_placeholder = st.empty()
-    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Chart History ({CACHE_CHART_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
+    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).") # Removed Chart TTL
 
     # --- Market Overview Section ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
@@ -561,9 +520,7 @@ try:
         if results:
             logger.info(f"Creating final table DataFrame with {len(results)} results.");
             try:
-                table_results_df = pd.DataFrame(results)
-                table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce')
-                table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
+                table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
                 cols_order = [
                     "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score",
                     f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y",
@@ -576,9 +533,9 @@ try:
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
                 ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
-                df_display = table_results_df[cols_to_show].copy() # Data to be styled
+                df_display = table_results_df[cols_to_show].copy()
 
-                # --- Styling Functions (Return CSS Strings ONLY) ---
+                # --- Styling Functions (Return CSS Strings Only) ---
                 def highlight_signal_style(val):
                     style = 'color: #6c757d; font-weight: normal;';
                     if isinstance(val, str):
@@ -615,8 +572,10 @@ try:
                     original_row_index = row_subset.name
                     if original_row_index not in table_results_df.index:
                          return pd.Series([default_style, default_style], index=row_subset.index)
+
                     k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
                     d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
+
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
@@ -624,13 +583,16 @@ try:
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k_css = style_str; style_d_css = style_str
-                    return pd.Series([style_k_css, style_d_css], index=row_subset.index)
-
+                    
+                    # Return a Series of styles matching the index of the input row_subset
+                    output_styles = pd.Series('', index=row_subset.index)
+                    if k_col in row_subset.index: output_styles[k_col] = style_k_css
+                    if d_col in row_subset.index: output_styles[d_col] = style_d_css
+                    return output_styles
 
                 # --- Define Formatters ---
                 formatters = {}
-                currency_col = f"Price ({VS_CURRENCY.upper()})"
-                volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
                 pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
                 rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
                 srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
@@ -665,9 +627,8 @@ try:
                 rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
                 if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
 
-                if macd_hist_col[0] in df_display.columns and macd_hist_col[0] in df_display: # Ensure column exists
+                if macd_hist_col[0] in df_display.columns and macd_hist_col[0] in df_display:
                      styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
-
 
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
@@ -689,34 +650,39 @@ try:
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
 
-    # --- Chart Section ---
-    st.divider(); st.subheader("💹 Detailed Coin Chart")
-    sel_col, price_col = st.columns([3, 1])
-    with sel_col: chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
-    with price_col:
-        st.write(""); st.write("")
-        if chart_symbol:
-            chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
-            if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
-                 latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
-                 if pd.notna(latest_price): st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
-                 else: st.caption(f"Current price N/A")
-            else: st.caption(f"Current price N/A")
+    # --- Chart Section (REMOVED in v1.4) ---
+    # st.divider(); st.subheader("💹 Detailed Coin Chart")
+    # sel_col, price_col = st.columns([3, 1])
+    # with sel_col: chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
+    # with price_col:
+    #     st.write(""); st.write("")
+    #     if chart_symbol:
+    #         chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
+    #         if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
+    #              latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
+    #              if pd.notna(latest_price): st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
+    #              else: st.caption(f"Current price N/A")
+    #         else: st.caption(f"Current price N/A")
+    #
+    # chart_placeholder = st.empty()
+    # if chart_symbol:
+    #     chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
+    #     if chart_coin_id:
+    #         logger.info(f"CHART: Attempting to load data for {chart_symbol} ({chart_coin_id}) chart.")
+    #         with chart_placeholder:
+    #              with st.spinner(f"Loading data and chart for {chart_symbol}..."):
+    #                 # chart_hist_df, chart_status = get_coingecko_historical_data_for_chart(chart_coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY) # Function removed
+    #                 chart_status = "Chart functionality removed" # Placeholder
+    #                 chart_hist_df = pd.DataFrame() # Placeholder
+    #
+    #                 if chart_status == "Success" and not chart_hist_df.empty:
+    #                     # fig = create_coin_chart(chart_hist_df.copy(), chart_symbol) # Function removed
+    #                     fig = None # Placeholder
+    #                     if fig: st.plotly_chart(fig, use_container_width=True); logger.info(f"CHART: Chart for {chart_symbol} displayed.")
+    #                     else: st.error(f"Could not generate chart for {chart_symbol} (indicator calculation or internal error, see log).")
+    #                 else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})")
+    #     else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.")
 
-    chart_placeholder = st.empty()
-    if chart_symbol:
-        chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
-        if chart_coin_id:
-            logger.info(f"CHART: Attempting to load data for {chart_symbol} ({chart_coin_id}) chart.")
-            with chart_placeholder:
-                 with st.spinner(f"Loading data and chart for {chart_symbol}..."):
-                    chart_hist_df, chart_status = get_coingecko_historical_data_for_chart(chart_coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY)
-                    if chart_status == "Success" and not chart_hist_df.empty:
-                        fig = create_coin_chart(chart_hist_df.copy(), chart_symbol)
-                        if fig: st.plotly_chart(fig, use_container_width=True); logger.info(f"CHART: Chart for {chart_symbol} displayed.")
-                        else: st.error(f"Could not generate chart for {chart_symbol} (indicator calculation or internal error, see log).")
-                    else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})")
-        else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.")
 
     # --- Legend (Improved v1.1) ---
     st.divider();
@@ -761,12 +727,8 @@ try:
         *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral / Mixed conditions.
         *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
 
-        **Detailed Coin Chart:**
-        *   Displays daily Candlesticks, Moving Averages (20d, 50d), and RSI (14d).
-
         **Important Notes:**
         *   Table data fetch is slowed (6s/coin). Initial load takes time.
-        *   Chart data fetch is faster.
         *   Traditional Market data has **4h cache**.
         *   **DYOR (Do Your Own Research).**
         """, unsafe_allow_html=True)
