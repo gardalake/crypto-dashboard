@@ -1,4 +1,4 @@
-# Version: v1.3 - Simplified SRSI Styling (Cell-wise OB/OS), Keep v1.1 features
+# Version: v1.2 - Fix Styler Apply/Map Usage, SRSI subset fix
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -17,7 +17,7 @@ import io
 log_stream = io.StringIO()
 logging.basicConfig(
     stream=log_stream,
-    level=logging.INFO,
+    level=logging.INFO, # Set to INFO for production, DEBUG for development
     format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     force=True
@@ -82,7 +82,7 @@ MACD_SIGNAL = 9
 MA_SHORT = 7
 MA_MEDIUM = 20
 MA_LONG = 50
-MA_XLONG = 30 # Re-check if used - seems not used, maybe remove later
+MA_XLONG = 30
 BB_PERIOD = 20
 BB_STD_DEV = 2.0
 VWAP_PERIOD = 14
@@ -309,7 +309,6 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
     return vwap
 
 def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV) -> tuple[float, float, float, float, float, float]:
-    """Calculates the last values for BBands: Mid, Upper, Lower, %B, Width, Width Change."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     series = series.dropna(); min_len_bb_change = period + 1
     if len(series) >= period:
@@ -334,7 +333,6 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     """Calculates all technical indicators (last value) for the table."""
-    # Added MA_XLONG (30d) key
     indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     min_len_rsi_base = RSI_PERIOD + 1; min_len_srsi_base = RSI_PERIOD + SRSI_PERIOD + max(SRSI_K, SRSI_D) + 5; min_len_macd_base = MACD_SLOW + MACD_SIGNAL + 5;
     min_len_sma_short = MA_SHORT; min_len_sma_medium = MA_MEDIUM; min_len_sma_xlong = MA_XLONG; min_len_sma_long = MA_LONG; min_len_bb = BB_PERIOD + 1;
@@ -350,21 +348,18 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_srsi_base}) for SRSI(1d)")
         if len_daily >= min_len_macd_base: macd_l, macd_s, macd_h = calculate_macd_manual(close_daily, MACD_FAST, MACD_SLOW, MACD_SIGNAL); indicators["MACD Line (1d)"] = macd_l; indicators["MACD Signal (1d)"] = macd_s; indicators["MACD Hist (1d)"] = macd_h
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_macd_base}) for MACD(1d)")
-        # MAs
         if len_daily >= min_len_sma_short: indicators[f"MA({MA_SHORT}d)"] = calculate_sma_manual(close_daily, MA_SHORT)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_short}) for MA({MA_SHORT}d)")
         if len_daily >= min_len_sma_medium: indicators[f"MA({MA_MEDIUM}d)"] = calculate_sma_manual(close_daily, MA_MEDIUM)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_medium}) for MA({MA_MEDIUM}d)")
-        if len_daily >= min_len_sma_xlong: indicators[f"MA({MA_XLONG}d)"] = calculate_sma_manual(close_daily, MA_XLONG) # Calculate MA_XLONG
+        if len_daily >= min_len_sma_xlong: indicators[f"MA({MA_XLONG}d)"] = calculate_sma_manual(close_daily, MA_XLONG)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_xlong}) for MA({MA_XLONG}d)")
         if len_daily >= min_len_sma_long: indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_sma_long}) for MA({MA_LONG}d)")
-        # BBands
         if len_daily >= min_len_bb:
              bb_mid, bb_up, bb_low, bb_pct_b, bb_width, bb_width_chg = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV)
              indicators["BB %B"] = bb_pct_b; indicators["BB Width"] = bb_width; indicators["BB Width %Chg"] = bb_width_chg
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_bb}) for Bollinger Bands")
-        # VWAP
         if len(df_for_vwap) >= min_len_vwap_base:
             indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
             if len(df_for_vwap) >= min_len_vwap_change:
@@ -391,7 +386,6 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 # --- Signal Functions (Refined v1.1) ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
     """Generates a signal using more indicators ('GPT' style v1.1)."""
-    # MA_XLONG (30d) is calculated but not explicitly used in signals yet, could be added
     required_inputs = [ rsi_1d, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price ]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     score = 0
@@ -612,7 +606,7 @@ try:
                         gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
 
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
-                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
+                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),  f"MA({MA_XLONG}d)": indicators.get(f"MA({MA_XLONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
                     logger.info(f"--- Table processing for {symbol} completed. ---"); actual_processed_count += 1
                 except Exception as coin_err: err_msg = f"Critical error processing table for {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Critical Table Error - See Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Finished crypto table loop. Processed {actual_processed_count}/{effective_num_coins} coins. Time: {total_time:.1f} sec"); st.sidebar.info(f"Table Processing Time: {total_time:.1f} sec")
@@ -628,7 +622,7 @@ try:
                     "RSI (1d)", "RSI (1w)", "RSI (1mo)",
                     "SRSI %K (1d)", "SRSI %D (1d)",
                     "MACD Hist (1d)",
-                    f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_LONG}d)", f"MA({MA_XLONG}d)", # Add MA30
+                    f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)",
                     "BB %B", "BB Width", "BB Width %Chg",
                     "VWAP (1d)", "VWAP %",
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
@@ -636,72 +630,85 @@ try:
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
                 df_display = table_results_df[cols_to_show].copy()
 
-                # --- Styling Functions (v1.2 - Return CSS Strings) ---
+                # --- Styling Functions (Return CSS Strings) ---
                 def highlight_signal_style(val):
-                    """Returns CSS style string for signals"""
-                    style = 'color: #6c757d;'; font_weight = 'normal';
+                    style = 'color: #6c757d; font-weight: normal;'; # Default grey
                     if isinstance(val, str):
-                        if "Strong Buy" in val: style, font_weight = 'color: #198754;', 'bold'
+                        if "Strong Buy" in val: style = 'color: #198754; font-weight: bold;'
                         elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
-                        elif "Strong Sell" in val: style, font_weight = 'color: #dc3545;', 'bold'
+                        elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
                         elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;'
                         elif "CTB" in val: style = 'color: #20c997;'
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
                     elif pd.isna(val): style = 'color: #adb5bd;'
-                    return f'{style} font-weight: {font_weight};'
+                    return style
 
                 def highlight_pct_col_style(val):
-                    """Returns CSS style string for percentages"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
-                    """Returns CSS style string for RSI"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
                     elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
                     else: return ''
 
                 def style_macd_hist(val):
-                    """Returns CSS style string for MACD Hist"""
                     if pd.isna(val) or not isinstance(val, (int, float)): return ''
                     if val > 0: return 'color: green;'
                     elif val < 0: return 'color: red;'
                     else: return ''
 
-                def style_stoch_rsi(row):
-                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings"""
-                    # Input 'row' here is expected to be the original numeric row for logic
+                def style_stoch_rsi(row_subset):
+                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings FOR THE SUBSET."""
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
-                    k_val_num = row[k_col] if k_col in row.index else np.nan
-                    d_val_num = row[d_col] if d_col in row.index else np.nan
-
+                    original_row_index = row_subset.name
+                    if original_row_index not in table_results_df.index: return pd.Series([default_style] * len(row_subset.index), index=row_subset.index)
+                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
+                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
-                        elif k_val_num > d_val_num: style_str = 'color: #28a745;' # Lighter Green
-                        elif k_val_num < d_val_num: style_str = 'color: #fd7e14;' # Orange
+                        elif k_val_num > d_val_num: style_str = 'color: #28a745;'
+                        elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
+                    output_styles = pd.Series('', index=row_subset.index) # Ensures the output Series matches the subset's columns
+                    if k_col in row_subset.index: output_styles[k_col] = style_k
+                    if d_col in row_subset.index: output_styles[d_col] = style_d
+                    return output_styles
 
-                    # Return styles ONLY for the subset columns expected by .apply(..., subset=...)
-                    return pd.Series([style_k, style_d], index=["SRSI %K (1d)", "SRSI %D (1d)"])
+                # --- Apply Styles THEN Formatting ---
+                styled_table = df_display.style
 
+                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
+                signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
+                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
+                macd_hist_col = ["MACD Hist (1d)"]
+
+                # Apply cell-wise styles using .map
+                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
+                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
+                for col in signal_cols:
+                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
+                rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
+                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
+                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
+
+                # Apply row-wise styling for SRSI *WITH subset*
+                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
+                if srsi_cols_exist:
+                     logger.debug("Applying SRSI row-wise styling.")
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
                 # --- Define Formatters ---
                 formatters = {}
-                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
-                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
-                rsi_cols = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
-                macd_hist_col = ["MACD Hist (1d)"]
-                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
-
-                if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
-                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
+                if f"Price ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Price ({VS_CURRENCY.upper()})"] = "${:,.4f}"
+                if f"Volume 24h ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Volume 24h ({VS_CURRENCY.upper()})"] = lambda x: format_large_number(x)
                 for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
                 def format_1h_with_icon(val):
@@ -709,37 +716,15 @@ try:
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
                     return f"{icon}{val:+.2f}%"
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
-                for col in rsi_cols + srsi_value_cols:
+                for col in rsi_cols_list + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = "{:.1f}"
                 if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
+                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
                 for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
 
-                # --- Apply Styles THEN Formatting ---
-                styled_table = df_display.style
-
-                # Apply cell-wise styles using .map
-                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
-                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
-
-                signal_cols_to_style = ["MA/MACD Cross Alert", "Composite Score"]
-                for col in signal_cols_to_style:
-                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
-
-                rsi_cols_to_style = [col for col in rsi_cols if col in df_display.columns]
-                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
-
-                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
-
-                # Apply row-wise styling for SRSI *WITH subset*
-                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
-                if srsi_cols_exist:
-                     logger.debug("Applying SRSI row-wise styling.")
-                     # Pass the *original* dataframe for lookup inside the function
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
-
                 # Apply formatting LAST
-                styled_table = styled_table.format(formatters, na_rep="N/A", precision=4)
+                styled_table = styled_table.format(formatters, na_rep="N/A")
 
                 # --- Display Table ---
                 logger.info("Displaying styled table DataFrame.");
