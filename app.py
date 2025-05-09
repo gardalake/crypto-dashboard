@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, SRSI subset fix, Ensure full code
+# Version: v1.3 - Final Styler Attempt: Format to string then apply styles, render HTML
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import time
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-# Other existing imports
 from alpha_vantage.timeseries import TimeSeries
 import logging
 import io
@@ -17,7 +16,7 @@ import io
 log_stream = io.StringIO()
 logging.basicConfig(
     stream=log_stream,
-    level=logging.INFO, # Set to INFO for production, DEBUG for development
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     force=True
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 logger.info("Logging configured for UI.")
 # --- END: Logging Configuration ---
 
-# Import zoneinfo
 try:
     from zoneinfo import ZoneInfo
     logger.info("Module 'zoneinfo' imported.")
@@ -35,10 +33,7 @@ except ImportError:
     st.warning("Module 'zoneinfo' not found. Using offset approximation for Rome timezone.")
     ZoneInfo = None
 
-# --- Streamlit App Layout ---
 st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", page_icon="📈")
-
-# --- CSS ---
 st.markdown("""<style>div[data-testid="stMetricValue"] { font-size: 14px !important; }</style>""", unsafe_allow_html=True)
 logger.info("CSS applied.")
 
@@ -549,7 +544,7 @@ try:
         last_update_placeholder.markdown(timestamp_display_str)
     else: logger.warning("Live CoinGecko data timestamp unavailable (last_cg_update_utc is None)."); last_update_placeholder.markdown("*Live CoinGecko data timestamp unavailable.*")
 
-    table_results_df = pd.DataFrame();
+    table_results_df = pd.DataFrame(); # Initialize for safety
     # --- Check Live Data and Process Table ---
     if market_data_df.empty:
         msg = "Critical Error: Could not load live CoinGecko data. Analysis table cannot be generated."
@@ -605,9 +600,9 @@ try:
                     f"Volume 24h ({VS_CURRENCY.upper()})", "Link"
                 ]
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
-                df_display = table_results_df[cols_to_show].copy()
+                df_display = table_results_df[cols_to_show].copy() # Data to be styled
 
-                # --- Styling Functions (Return CSS Strings Only) ---
+                # --- Styling Functions (Return CSS Strings) ---
                 def highlight_signal_style(val):
                     style = 'color: #6c757d; font-weight: normal;';
                     if isinstance(val, str):
@@ -619,11 +614,11 @@ try:
                         elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): style = 'color: #adb5bd;'
+                    elif pd.isna(val): style = 'color: #adb5bd;' # Handle NaN input
                     return style
 
                 def highlight_pct_col_style(val):
-                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if pd.isna(val) or not isinstance(val, (int, float)): return '' # No style for NaN or non-numeric
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
                 def style_rsi(val):
@@ -638,16 +633,18 @@ try:
                     elif val < 0: return 'color: red;'
                     else: return ''
 
-                def style_stoch_rsi(row_subset):
-                    """Applies row-wise style CSS string to SRSI cols - returns Series of CSS strings FOR THE SUBSET."""
-                    k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
-                    default_style = ''; style_k = default_style; style_d = default_style
+                def style_stoch_rsi(row_subset): # Expects a Series with 2 elements (K and D)
+                    k_col_name = "SRSI %K (1d)" # Name of K col in the original DataFrame
+                    d_col_name = "SRSI %D (1d)" # Name of D col in the original DataFrame
+                    default_style = ''; style_k_css = default_style; style_d_css = default_style
+
+                    # Get original numeric values from the main DataFrame using the row's index
                     original_row_index = row_subset.name
                     if original_row_index not in table_results_df.index:
-                         return pd.Series([default_style] * len(row_subset.index), index=row_subset.index)
+                        return pd.Series([default_style, default_style], index=row_subset.index)
 
-                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
-                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
+                    k_val_num = table_results_df.loc[original_row_index, k_col_name]
+                    d_val_num = table_results_df.loc[original_row_index, d_col_name]
 
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
@@ -655,56 +652,58 @@ try:
                         elif k_val_num > d_val_num: style_str = 'color: #28a745;'
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
-                        style_k = style_str; style_d = style_str
-                    # Returns a Series of styles that matches the index of the input `row_subset`
-                    return pd.Series([style_k, style_d], index=row_subset.index)
+                        style_k_css = style_str; style_d_css = style_str
+                    
+                    # The Series returned must match the columns in the subset
+                    return pd.Series([style_k_css, style_d_css], index=row_subset.index)
 
-                # --- Define Formatters ---
-                formatters = {}
-                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
-                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
-                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
-                macd_hist_col = ["MACD Hist (1d)"]
-                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
-
-                if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
-                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
-                for col in pct_cols_all:
-                    if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
-                def format_1h_with_icon(val):
-                    if pd.isna(val): return "N/A"
-                    icon = "🔥 " if show_fire_icon and val > 0 else ""
-                    return f"{icon}{val:+.2f}%"
-                if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
-                for col in rsi_cols_list + srsi_value_cols:
-                     if col in df_display.columns: formatters[col] = "{:.1f}"
-                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
-                for col in ma_vwap_cols:
-                     if col in df_display.columns: formatters[col] = "{:,.2f}"
 
                 # --- Apply Styles THEN Formatting ---
                 styled_table = df_display.style
 
+                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
+                signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
+                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"] # The actual column names from df_display
+                macd_hist_col = ["MACD Hist (1d)"]
+
+                # Apply cell-wise styles using .map
                 cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
                 if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
-
-                signal_cols_to_style = ["MA/MACD Cross Alert", "Composite Score"]
-                for col in signal_cols_to_style:
+                for col in signal_cols:
                      if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
-
                 rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
                 if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
-
                 if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
 
+                # Apply row-wise styling for SRSI
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
                      styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
+                # --- Define Formatters ---
+                formatters = {}
+                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+
+                if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
+                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
+                for col in pct_cols_all: # Format all percent columns (except 1h handled below)
+                    if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
+                def format_1h_with_icon(val): # Special formatter for % 1h
+                    if pd.isna(val): return "N/A"
+                    icon = "🔥 " if show_fire_icon and val > 0 else ""
+                    return f"{icon}{val:+.2f}%"
+                if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
+                for col in rsi_cols_list + srsi_value_cols: # Format RSI & SRSI values
+                     if col in df_display.columns: formatters[col] = "{:.1f}"
+                if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}" # Add sign
+                for col in ma_vwap_cols: # Format MAs/VWAP
+                     if col in df_display.columns: formatters[col] = "{:,.2f}"
+
                 # Apply formatting LAST
-                styled_table = styled_table.format(formatters, na_rep="N/A") # Removed precision=4, handled by individual formatters
+                styled_table = styled_table.format(formatters, na_rep="N/A")
 
                 # --- Display Table ---
                 logger.info("Displaying styled table DataFrame.");
