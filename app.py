@@ -1,4 +1,4 @@
-# Version: v1.2 - Fix Styler Apply/Map Usage, SRSI subset fix
+# Version: v1.2 - Fix Styler Apply/Map Usage, SRSI subset fix, Ensure full code
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -48,43 +48,23 @@ SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "RNDR": "render-token",
     "RAY": "raydium", "SUI": "sui", "ONDO": "ondo-finance", "ARB": "arbitrum",
     "TAO": "bittensor", "LINK": "chainlink", "HBAR": "hedera-hashgraph",
-    "IMX": "immutable-x", "TRUMP": "official-trump", "AERO": "aerodrome-finance",
-    "MKR": "maker",
+    "IMX": "immutable-x", "TRUMP": "official-trump", "AERO": "aerodrome-finance", "MKR": "maker",
 }
 SYMBOLS = list(SYMBOL_TO_ID_MAP.keys())
 COINGECKO_IDS_LIST = list(SYMBOL_TO_ID_MAP.values())
 NUM_COINS = len(SYMBOLS)
 FIRE_ICON_THRESHOLD = 8
 logger.info(f"Number of coins configured: {NUM_COINS}")
-TRAD_TICKERS_AV = [
-    'SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL',
-    'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR'
-]
+TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Traditional tickers configured (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"
-CACHE_TTL = 1800
-CACHE_HIST_TTL = CACHE_TTL * 2
-CACHE_CHART_TTL = CACHE_TTL
-CACHE_TRAD_TTL = 14400
-DAYS_HISTORY_DAILY = 365
-DAYS_HISTORY_HOURLY = 7
-RSI_PERIOD = 14
-RSI_OB = 70.0
-RSI_OS = 30.0
-SRSI_PERIOD = 14
-SRSI_K = 3
-SRSI_D = 3
-SRSI_OB = 80.0
-SRSI_OS = 20.0
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
-MA_SHORT = 7
-MA_MEDIUM = 20
-MA_LONG = 50
-MA_XLONG = 30
-BB_PERIOD = 20
-BB_STD_DEV = 2.0
+CACHE_TTL, CACHE_HIST_TTL, CACHE_CHART_TTL, CACHE_TRAD_TTL = 1800, 3600, 1800, 14400
+DAYS_HISTORY_DAILY, DAYS_HISTORY_HOURLY = 365, 7
+RSI_PERIOD, RSI_OB, RSI_OS = 14, 70.0, 30.0
+SRSI_PERIOD, SRSI_K, SRSI_D, SRSI_OB, SRSI_OS = 14, 3, 3, 80.0, 20.0
+MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+MA_SHORT, MA_MEDIUM, MA_LONG, MA_XLONG = 7, 20, 50, 30
+BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info("Finished global configuration.")
 
@@ -108,7 +88,6 @@ def check_password():
     logger.debug("Password check passed."); return True
 
 def format_large_number(num):
-    """Formats large numbers into readable M, B, T formats."""
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
     if num_abs < 1_000_000: return f"{sign}{num_abs:,.0f}"
@@ -118,7 +97,6 @@ def format_large_number(num):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading market data (CoinGecko)...")
 def get_coingecko_market_data(ids_list, currency):
-    """Fetches live market data from CoinGecko."""
     logger.info(f"Attempting CoinGecko live data fetch for {len(ids_list)} IDs.")
     ids_string = ",".join(ids_list); url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {'vs_currency': currency, 'ids': ids_string, 'order': 'market_cap_desc', 'per_page': str(len(ids_list)), 'page': 1, 'sparkline': False, 'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'}
@@ -141,7 +119,6 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_CHART_TTL, show_spinner=False)
 def get_coingecko_historical_data_for_chart(coin_id, currency, days):
-    """Fetches historical data from CoinGecko for charts (daily)."""
     logger.debug(f"CHART: Starting historical fetch for {coin_id} (daily, {days}d)."); url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {'vs_currency': currency, 'days': str(days), 'interval': 'daily', 'precision': 'full'}; status_msg = f"Unknown Error ({coin_id}, daily chart)"
     try:
@@ -168,7 +145,6 @@ def get_coingecko_historical_data_for_chart(coin_id, currency, days):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    """Fetches historical data from CoinGecko with delay (for table indicators)."""
     logger.debug(f"TABLE: Starting historical fetch for {coin_id} ({interval}), 6s delay..."); time.sleep(6.0); logger.debug(f"TABLE: Delay ended for {coin_id} ({interval}), starting API call.")
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
     status_msg = f"Unknown Error ({coin_id}, {interval})"
@@ -309,6 +285,7 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
     return vwap
 
 def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV) -> tuple[float, float, float, float, float, float]:
+    """Calculates the last values for BBands: Mid, Upper, Lower, %B, Width, Width Change."""
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     series = series.dropna(); min_len_bb_change = period + 1
     if len(series) >= period:
@@ -606,7 +583,7 @@ try:
                         gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
 
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
-                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"),  f"MA({MA_XLONG}d)": indicators.get(f"MA({MA_XLONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
+                    results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_XLONG}d)": indicators.get(f"MA({MA_XLONG}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
                     logger.info(f"--- Table processing for {symbol} completed. ---"); actual_processed_count += 1
                 except Exception as coin_err: err_msg = f"Critical error processing table for {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Critical Table Error - See Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Finished crypto table loop. Processed {actual_processed_count}/{effective_num_coins} coins. Time: {total_time:.1f} sec"); st.sidebar.info(f"Table Processing Time: {total_time:.1f} sec")
@@ -630,9 +607,9 @@ try:
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
                 df_display = table_results_df[cols_to_show].copy()
 
-                # --- Styling Functions (Return CSS Strings) ---
+                # --- Styling Functions (Return CSS Strings Only) ---
                 def highlight_signal_style(val):
-                    style = 'color: #6c757d; font-weight: normal;'; # Default grey
+                    style = 'color: #6c757d; font-weight: normal;';
                     if isinstance(val, str):
                         if "Strong Buy" in val: style = 'color: #198754; font-weight: bold;'
                         elif "Buy" in val and "Strong" not in val: style = 'color: #28a745;'
@@ -666,9 +643,12 @@ try:
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k = default_style; style_d = default_style
                     original_row_index = row_subset.name
-                    if original_row_index not in table_results_df.index: return pd.Series([default_style] * len(row_subset.index), index=row_subset.index)
+                    if original_row_index not in table_results_df.index:
+                         return pd.Series([default_style] * len(row_subset.index), index=row_subset.index)
+
                     k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
                     d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
+
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
@@ -676,39 +656,20 @@ try:
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k = style_str; style_d = style_str
-                    output_styles = pd.Series('', index=row_subset.index) # Ensures the output Series matches the subset's columns
-                    if k_col in row_subset.index: output_styles[k_col] = style_k
-                    if d_col in row_subset.index: output_styles[d_col] = style_d
-                    return output_styles
-
-                # --- Apply Styles THEN Formatting ---
-                styled_table = df_display.style
-
-                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
-                signal_cols = ["MA/MACD Cross Alert", "Composite Score"]
-                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
-                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
-                macd_hist_col = ["MACD Hist (1d)"]
-
-                # Apply cell-wise styles using .map
-                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
-                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
-                for col in signal_cols:
-                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
-                rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
-                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
-                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
-
-                # Apply row-wise styling for SRSI *WITH subset*
-                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
-                if srsi_cols_exist:
-                     logger.debug("Applying SRSI row-wise styling.")
-                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
+                    # Returns a Series of styles that matches the index of the input `row_subset`
+                    return pd.Series([style_k, style_d], index=row_subset.index)
 
                 # --- Define Formatters ---
                 formatters = {}
-                if f"Price ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Price ({VS_CURRENCY.upper()})"] = "${:,.4f}"
-                if f"Volume 24h ({VS_CURRENCY.upper()})" in df_display.columns: formatters[f"Volume 24h ({VS_CURRENCY.upper()})"] = lambda x: format_large_number(x)
+                currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
+                pct_cols_all = ["% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "VWAP %", "BB Width", "BB Width %Chg", "BB %B"]
+                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
+                macd_hist_col = ["MACD Hist (1d)"]
+                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
+
+                if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
+                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
                 for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
                 def format_1h_with_icon(val):
@@ -719,12 +680,31 @@ try:
                 for col in rsi_cols_list + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = "{:.1f}"
                 if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
-                ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
                 for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
 
+                # --- Apply Styles THEN Formatting ---
+                styled_table = df_display.style
+
+                cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
+                if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
+
+                signal_cols_to_style = ["MA/MACD Cross Alert", "Composite Score"]
+                for col in signal_cols_to_style:
+                     if col in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col])
+
+                rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
+                if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
+
+                if macd_hist_col[0] in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
+
+                srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
+                if srsi_cols_exist:
+                     logger.debug("Applying SRSI row-wise styling.")
+                     styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
+
                 # Apply formatting LAST
-                styled_table = styled_table.format(formatters, na_rep="N/A")
+                styled_table = styled_table.format(formatters, na_rep="N/A") # Removed precision=4, handled by individual formatters
 
                 # --- Display Table ---
                 logger.info("Displaying styled table DataFrame.");
@@ -737,7 +717,6 @@ try:
 
             except Exception as df_err: logger.exception("Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
-        # --- Error Expander Removed ---
 
     # --- Chart Section ---
     st.divider(); st.subheader("💹 Detailed Coin Chart")
