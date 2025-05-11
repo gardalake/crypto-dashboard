@@ -1,4 +1,4 @@
-# Version: v1.4.8 - Fix SyntaxError in format_1h_with_icon
+# Version: v1.4.9 - Fix IndentationError in get_traditional_market_data_av
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -22,10 +22,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # --- END: Logging Configuration ---
 
-IS_DEBUG_MODE = False 
+IS_DEBUG_MODE = False
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
-logger.info(f"Logging configured for UI (v1.4.8 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
+logger.info(f"Logging configured for UI (v1.4.9 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
 
 try:
     from zoneinfo import ZoneInfo
@@ -63,7 +63,7 @@ VWAP_PERIOD = 14
 logger.info(f"[CONFIG] Global config done: {NUM_COINS} coins ({','.join(SYMBOLS[:3])}...), Trad Tickers: {len(TRAD_TICKERS_AV)}.")
 
 # --- FUNCTION DEFINITIONS (General) ---
-def format_large_number(num): # Unchanged from v1.4.7
+def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float, np.number)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
     if num_abs < 1_000_000: return f"{sign}{num_abs:,.0f}"
@@ -72,7 +72,7 @@ def format_large_number(num): # Unchanged from v1.4.7
     else: return f"{sign}{num_abs / 1_000_000_000_000:.2f}T"
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading market data (CoinGecko)...")
-def get_coingecko_market_data(ids_list, currency): # Unchanged from v1.4.7
+def get_coingecko_market_data(ids_list, currency):
     func_tag = "[API_CG_LIVE]"; logger.info(f"{func_tag} Attempting fetch for {len(ids_list)} IDs.")
     ids_string = ",".join(ids_list); url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {'vs_currency': currency, 'ids': ids_string, 'order': 'market_cap_desc', 'per_page': str(len(ids_list)), 'page': 1, 'sparkline': False, 'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'}
@@ -97,7 +97,7 @@ def get_coingecko_market_data(ids_list, currency): # Unchanged from v1.4.7
     except Exception as e: logger.exception(f"{func_tag}[PROC_ERROR] Error Processing CG Market Data from {url}:"); st.error(f"Error Processing CoinGecko Market Data: {e}"); return pd.DataFrame(), timestamp_utc
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
-def get_coingecko_historical_data(coin_id, currency, days, interval='daily'): # Unchanged from v1.4.7
+def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
     func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0)
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval, 'precision': 'full'}; status_msg = "Unknown Error"
     try:
@@ -123,7 +123,7 @@ def get_coingecko_historical_data(coin_id, currency, days, interval='daily'): # 
     except Exception as e: status_msg = f"Generic Err ({type(e).__name__})"; logger.exception(f"{func_tag}[PROC_ERROR] Error processing CG Hist:"); return pd.DataFrame(), status_msg
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_fear_greed_index(): # Unchanged from v1.4.7
+def get_fear_greed_index():
     func_tag = "[API_FG_INDEX]"; logger.info(f"{func_tag} Attempting fetch."); url = "https://api.alternative.me/fng/?limit=1"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json()
@@ -135,7 +135,7 @@ def get_fear_greed_index(): # Unchanged from v1.4.7
     except Exception as e: msg = f"{func_tag}[PROC_ERROR] Error Processing: {e}"; logger.exception(msg); st.sidebar.warning(f"F&G Index Processing Error"); return "N/A"
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_global_market_data_cg(currency): # Unchanged from v1.4.7
+def get_global_market_data_cg(currency):
     func_tag = "[API_CG_GLOBAL]"; logger.info(f"{func_tag} Attempting fetch for {currency.upper()}."); url = "https://api.coingecko.com/api/v3/global"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json().get('data', {})
@@ -146,42 +146,55 @@ def get_global_market_data_cg(currency): # Unchanged from v1.4.7
     except requests.exceptions.RequestException as req_ex: msg = f"{func_tag}[ERROR] API Error: {req_ex}"; logger.warning(msg); st.sidebar.warning(f"Global MCap API Error"); return np.nan
     except Exception as e: msg = f"{func_tag}[PROC_ERROR] Error Processing: {e}"; logger.exception(msg); st.sidebar.warning(f"Global MCap Processing Error"); return np.nan
 
-def get_etf_flow(): logger.debug("[DATA_ETF] get_etf_flow called (placeholder)."); return "N/A" # Unchanged
+def get_etf_flow(): logger.debug("[DATA_ETF] get_etf_flow called (placeholder)."); return "N/A"
 
 @st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Loading traditional market data (Alpha Vantage)...")
-def get_traditional_market_data_av(tickers): # Unchanged from v1.4.7
+def get_traditional_market_data_av(tickers):
     func_tag = "[API_AV]"; logger.info(f"{func_tag} Attempting fetch for {len(tickers)} tickers."); data = {ticker: {'price': np.nan, 'change': np.nan, 'change_percent': 'N/A'} for ticker in tickers}; api_key = None
     try: api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]; logger.info(f"{func_tag} API key read from secrets.")
     except KeyError: logger.error(f"{func_tag}[CONFIG_ERROR] Secret 'ALPHA_VANTAGE_API_KEY' not defined."); st.sidebar.error("AlphaVantage Key Missing"); return data
     except Exception as e: logger.exception(f"{func_tag}[CONFIG_ERROR] Unexpected error reading Alpha Vantage secrets:"); st.sidebar.error(f"AlphaVantage Secrets Err: {e}"); return data
     if not api_key: logger.error(f"{func_tag}[CONFIG_ERROR] Alpha Vantage API key found but is empty."); st.sidebar.error("AlphaVantage Key Empty"); return data
+    
     ts = TimeSeries(key=api_key, output_format='pandas'); calls_made = 0; max_calls_per_minute = 5; max_calls_this_run = 25; delay_between_calls = (60.0 / max_calls_per_minute) + 0.5 
+    
     for ticker_sym in tickers:
-        if calls_made >= max_calls_this_run: msg = f"{func_tag}[RATE_LIMIT] Call limit for this run ({max_calls_this_run}) reached. Stopping fetch for {ticker_sym}."; logger.warning(msg); st.sidebar.warning(msg); break
+        if calls_made >= max_calls_this_run:
+            msg = f"{func_tag}[RATE_LIMIT] Call limit for this run ({max_calls_this_run}) reached. Stopping fetch for {ticker_sym}."; logger.warning(msg); st.sidebar.warning(msg); break
         try:
-            logger.info(f"{func_tag} Fetching {ticker_sym} (Call #{calls_made+1}/{max_calls_this_run}, Pause {delay_between_calls:.1f}s)..."); time.sleep(delay_between_calls); quote_data, meta_data = ts.get_quote_endpoint(symbol=ticker_sym); calls_made += 1
+            logger.info(f"{func_tag} Fetching {ticker_sym} (Call #{calls_made+1}/{max_calls_this_run}, Pause {delay_between_calls:.1f}s)..."); time.sleep(delay_between_calls)
+            quote_data, meta_data = ts.get_quote_endpoint(symbol=ticker_sym); calls_made += 1
             if not quote_data.empty:
                 data[ticker_sym]['price'] = pd.to_numeric(quote_data['05. price'].iloc[0], errors='coerce')
                 data[ticker_sym]['change'] = pd.to_numeric(quote_data['09. change'].iloc[0], errors='coerce')
                 data[ticker_sym]['change_percent'] = str(quote_data['10. change percent'].iloc[0]) 
                 logger.info(f"{func_tag}[SUCCESS] Data for {ticker_sym} fetched OK.")
             else: logger.warning(f"{func_tag}[WARN] Empty response from AV for {ticker_sym}.");
-        except ValueError as ve: msg = f"{func_tag}[ERROR] Alpha Vantage Error for {ticker_sym}: {ve}"; logger.warning(msg); st.sidebar.warning(f"AV Error ({ticker_sym}): Limit likely"); ve_str = str(ve).lower()
-             if "call frequency" in ve_str or "api key" in ve_str or "limit" in ve_str or "premium" in ve_str: logger.error(f"{func_tag}[CRITICAL_API_ERROR] Critical AV API key/limit error detected. Stopping fetch."); st.sidebar.error("AV API Limit Reached!"); break
-        except Exception as e: msg = f"{func_tag}[PROC_ERROR] Generic error AV for {ticker_sym}: {e}"; logger.exception(msg); st.sidebar.warning(f"AV Error ({ticker_sym})");
+        except ValueError as ve:
+            msg = f"{func_tag}[ERROR] Alpha Vantage Error for {ticker_sym}: {ve}"
+            logger.warning(msg)
+            st.sidebar.warning(f"AV Error ({ticker_sym}): Limit likely") 
+            ve_str = str(ve).lower()
+            # --- FIX: Correct indentation for this if statement ---
+            if "call frequency" in ve_str or "api key" in ve_str or \
+               "limit" in ve_str or "premium" in ve_str:
+                logger.error(f"{func_tag}[CRITICAL_API_ERROR] Critical AV API key/limit error detected. Stopping fetch.")
+                st.sidebar.error("AV API Limit Reached! Fetch stopped.") 
+                break 
+        except Exception as e: 
+            msg = f"{func_tag}[PROC_ERROR] Generic error AV for {ticker_sym}: {e}"; 
+            logger.exception(msg); st.sidebar.warning(f"AV Error ({ticker_sym})");
     logger.info(f"{func_tag} Finished fetch. Made {calls_made} calls."); return data
 
 # --- Indicator Calculation Functions ---
-def _ensure_numeric_series(series: pd.Series, func_name_parent="indicator_calc") -> pd.Series: # Unchanged from v1.4.7
+def _ensure_numeric_series(series: pd.Series, func_name_parent="indicator_calc") -> pd.Series:
     if not isinstance(series, pd.Series): logger.debug(f"[{func_name_parent}|DATA_CLEAN] Input is not a Series, returning empty numeric series."); return pd.Series(dtype=float)
     if series.empty: logger.debug(f"[{func_name_parent}|DATA_CLEAN] Input series is empty, returning as is."); return series
     s_numeric = pd.to_numeric(series, errors='coerce'); s_cleaned = s_numeric.dropna()
     if IS_DEBUG_MODE and len(s_numeric) != len(s_cleaned): logger.debug(f"[{func_name_parent}|DATA_CLEAN] Dropped {len(s_numeric) - len(s_cleaned)} NaNs during numeric conversion.")
     return s_cleaned
 
-# The pattern for `calculate_xxx_manual` functions would be to add `symbol` and `func_tag` for logging.
-# For brevity, I will only show the pattern for RSI and assume others are similar or as in v1.4.7 if not shown.
-def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD, symbol="<sym>") -> float: # Unchanged
+def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD, symbol="<sym>") -> float:
     func_tag = f"[INDICATOR_CALC({symbol})|RSI]"; series = _ensure_numeric_series(series, func_tag)
     if len(series) < period + 1: logger.debug(f"{func_tag}[INSUFF_DATA] Need {period+1}, got {len(series)}"); return np.nan
     delta = series.diff(); gain = delta.where(delta > 0, 0.0); loss = -delta.where(delta < 0, 0.0); avg_gain = gain.ewm(com=period - 1, min_periods=period).mean(); avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
@@ -192,7 +205,7 @@ def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD, symbol="<s
     rs = last_avg_gain / last_avg_loss; rsi = 100.0 - (100.0 / (1.0 + rs))
     return max(0.0, min(100.0, rsi)) if pd.notna(rsi) else np.nan
 
-def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_period: int = SRSI_PERIOD, k_smooth: int = SRSI_K, d_smooth: int = SRSI_D, symbol="<sym>") -> tuple[float, float]: # Unchanged
+def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_period: int = SRSI_PERIOD, k_smooth: int = SRSI_K, d_smooth: int = SRSI_D, symbol="<sym>") -> tuple[float, float]:
     func_tag = f"[INDICATOR_CALC({symbol})|SRSI]"; series = _ensure_numeric_series(series, func_tag)
     if len(series) < rsi_period + stoch_period + max(k_smooth, d_smooth) -1 : logger.debug(f"{func_tag}[INSUFF_DATA]"); return np.nan, np.nan
     delta = series.diff(); gain = delta.where(delta > 0, 0.0); loss = -delta.where(delta < 0, 0.0); avg_gain = gain.ewm(com=rsi_period - 1, min_periods=rsi_period).mean(); avg_loss = loss.ewm(com=rsi_period - 1, min_periods=rsi_period).mean()
@@ -213,7 +226,7 @@ def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_p
     last_d_val = stoch_rsi_d.iloc[-1]; d_final = max(0.0, min(100.0, last_d_val)) if pd.notna(last_d_val) else np.nan
     return k_final, d_final
 
-def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL, symbol="<sym>") -> tuple[float, float, float]: # Unchanged
+def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL, symbol="<sym>") -> tuple[float, float, float]:
     func_tag = f"[INDICATOR_CALC({symbol})|MACD]"; series = _ensure_numeric_series(series, func_tag)
     if len(series) < slow + signal - 1: logger.debug(f"{func_tag}[INSUFF_DATA]"); return np.nan, np.nan, np.nan
     ema_fast = series.ewm(span=fast, adjust=False, min_periods=fast).mean(); ema_slow = series.ewm(span=slow, adjust=False, min_periods=slow).mean(); macd_line = ema_fast - ema_slow
@@ -222,13 +235,13 @@ def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = 
     last_macd = macd_line.iloc[-1] if pd.notna(macd_line.iloc[-1]) else np.nan; last_signal = signal_line.iloc[-1] if pd.notna(signal_line.iloc[-1]) else np.nan; last_hist = histogram.iloc[-1] if pd.notna(histogram.iloc[-1]) else np.nan
     return last_macd, last_signal, last_hist
 
-def calculate_sma_manual(series: pd.Series, period: int, symbol="<sym>") -> float: # Unchanged
+def calculate_sma_manual(series: pd.Series, period: int, symbol="<sym>") -> float:
     func_tag = f"[INDICATOR_CALC({symbol})|SMA({period})]"; series = _ensure_numeric_series(series, func_tag)
     if len(series) < period: logger.debug(f"{func_tag}[INSUFF_DATA]"); return np.nan
     sma = series.rolling(window=period, min_periods=period).mean().iloc[-1]
     return sma if pd.notna(sma) else np.nan
 
-def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD, symbol="<sym>") -> float: # Unchanged
+def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD, symbol="<sym>") -> float:
     func_tag = f"[INDICATOR_CALC({symbol})|VWAP({period})]"
     if not isinstance(df_slice, pd.DataFrame) or df_slice.empty or not all(col in df_slice.columns for col in ['close', 'volume']): logger.debug(f"{func_tag}[BAD_INPUT] Invalid df_slice."); return np.nan
     df_valid_slice = df_slice[['close', 'volume']].copy(); df_valid_slice['close'] = pd.to_numeric(df_valid_slice['close'], errors='coerce'); df_valid_slice['volume'] = pd.to_numeric(df_valid_slice['volume'], errors='coerce')
@@ -241,7 +254,7 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD, sym
     vwap = pv.sum() / total_volume
     return vwap if pd.notna(vwap) else np.nan
 
-def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV, symbol="<sym>") -> tuple[float, float, float, float, float, float]: # Unchanged
+def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV, symbol="<sym>") -> tuple[float, float, float, float, float, float]:
     func_tag = f"[INDICATOR_CALC({symbol})|BBANDS]" ; series = _ensure_numeric_series(series, func_tag)
     min_len_bb_change = period + 1 
     if len(series) < period: logger.debug(f"{func_tag}[INSUFF_DATA] Main period."); return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -262,7 +275,7 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
     else: logger.debug(f"{func_tag}[INSUFF_DATA] For BW change.")
     return middle_band_now, upper_band_now, lower_band_now, percent_b_now, bandwidth_now, bandwidth_change
 
-def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict: # Adapted for new logging
+def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     func_tag = f"[COMPUTE_ALL({symbol})]"
     indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     if hist_daily_df.empty or 'close' not in hist_daily_df.columns: logger.warning(f"{func_tag}[DATA_WARN] Empty/invalid daily historical data. Cannot compute indicators."); return indicators
@@ -281,16 +294,16 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict: # 
     indicators[f"MA({MA_LONG}d)"] = calculate_sma_manual(close_daily, MA_LONG, symbol=symbol)
     _, _, _, bb_pct_b, bb_width, bb_width_chg = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV, symbol=symbol)
     indicators["BB %B"], indicators["BB Width"], indicators["BB Width %Chg"] = bb_pct_b, bb_width, bb_width_chg
-    vwap_df_ready = df_for_vwap_calc.dropna(subset=['close', 'volume']) # Ensure this is non-empty before passing
-    if not vwap_df_ready.empty:
+    vwap_df_ready = df_for_vwap_calc.dropna(subset=['close', 'volume']) 
+    if not vwap_df_ready.empty and len(vwap_df_ready) >= VWAP_PERIOD : # Check length for VWAP calc
         indicators["VWAP (1d)"] = calculate_vwap_manual(vwap_df_ready.iloc[-VWAP_PERIOD:], VWAP_PERIOD, symbol=symbol)
-        if len(vwap_df_ready) >= VWAP_PERIOD + 1: # Check for VWAP % change data
+        if len(vwap_df_ready) >= VWAP_PERIOD + 1: 
             vwap_today = indicators["VWAP (1d)"]
             vwap_yesterday = calculate_vwap_manual(vwap_df_ready.iloc[-(VWAP_PERIOD + 1):-1], VWAP_PERIOD, symbol=symbol)
             if pd.notna(vwap_today) and pd.notna(vwap_yesterday) and vwap_yesterday != 0: indicators["VWAP %"] = ((vwap_today - vwap_yesterday) / vwap_yesterday) * 100
             else: logger.debug(f"{func_tag}[CALC_WARN] VWAP %: Today/Yesterday VWAP NaN or Yesterday is 0.")
         else: logger.debug(f"{func_tag}[INSUFF_DATA] VWAP %: Not enough data in vwap_df_ready ({len(vwap_df_ready)} rows).")
-    else: logger.debug(f"{func_tag}[INSUFF_DATA] VWAP: vwap_df_ready is empty after dropna.")
+    else: logger.debug(f"{func_tag}[INSUFF_DATA] VWAP: vwap_df_ready is empty or too short after dropna ({len(vwap_df_ready)} rows).")
 
     if len_daily > RSI_PERIOD + 1 and pd.api.types.is_datetime64_any_dtype(close_daily.index):
         try:
@@ -306,7 +319,6 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict: # 
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Calculated indicators: { {k:v for k,v in indicators.items() if pd.notna(v)} }")
     return indicators
 
-# Signal Functions (Unchanged from v1.4.7)
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price): 
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
     except: current_price_num = np.nan
@@ -359,17 +371,15 @@ def generate_gemini_alert(ma_medium_val, ma_long_val, macd_hist, rsi_1d, vwap_1d
 # --- START OF MAIN APP EXECUTION ---
 logger.info("[MAIN_EXEC] Starting main UI execution.")
 try:
-    # UI Setup (Title, Refresh, Timestamp) - Unchanged from v1.4.7
     col_title, _, col_button = st.columns([4, 1, 1]); 
     with col_title: st.title("📈 Crypto Technical Dashboard Pro")
     with col_button: st.write(""); 
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v148"): # Ensure unique key
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v149"): 
             logger.info("[UI_ACTION] Refresh button clicked.");
             if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
     last_update_placeholder = st.empty(); st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
 
-    # Market Overview Section - Unchanged from v1.4.7
     st.markdown("---"); st.subheader("🌐 Market Overview")
     fear_greed_value = get_fear_greed_index(); total_market_cap = get_global_market_data_cg(VS_CURRENCY); etf_flow_value = get_etf_flow(); traditional_market_data = get_traditional_market_data_av(TRAD_TICKERS_AV)
     def format_delta(change_val, change_pct_str):
@@ -400,10 +410,9 @@ try:
     for idx, ticker_sym_loopvar in enumerate(stock_tickers_row_av): render_metric(stock_cols[idx % num_stock_cols], label=ticker_sym_loopvar, ticker=ticker_sym_loopvar, data_dict=traditional_market_data, help_text=f"Ticker: {ticker_sym_loopvar}")
     st.markdown("---")
 
-    # Main Crypto Technical Analysis Table
     st.subheader(f"📊 Crypto Technical Analysis ({NUM_COINS} Assets)")
-    market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY) # Unchanged from v1.4.7
-    if last_cg_update_utc: # Unchanged from v1.4.7
+    market_data_df, last_cg_update_utc = get_coingecko_market_data(COINGECKO_IDS_LIST, VS_CURRENCY)
+    if last_cg_update_utc:
         try:
             local_tz_name = "Europe/Rome"; user_tz = None
             if ZoneInfo: user_tz = ZoneInfo(local_tz_name)
@@ -418,16 +427,16 @@ try:
         last_update_placeholder.markdown(timestamp_display_str)
     else: logger.warning("[UI_WARN] Live CoinGecko data timestamp unavailable."); last_update_placeholder.markdown("*Live CoinGecko data timestamp unavailable.*")
 
-    if market_data_df.empty: # Unchanged from v1.4.7
+    if market_data_df.empty:
         msg = "[CRITICAL_DATA] No live CoinGecko data. Table cannot be generated.";
         if st.session_state.get("api_warning_shown", False): msg = "[TABLE_ERROR] Table not generated: Error loading live data (CoinGecko API limit?)."
         logger.error(msg); st.error(msg)
-    else: # Process and Display Table
+    else:
         results = []; fetch_errors = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
         show_fire_icon = (market_data_df['price_change_percentage_1h_in_currency'].dropna() > 0).sum() >= FIRE_ICON_THRESHOLD if 'price_change_percentage_1h_in_currency' in market_data_df else False
         logger.info(f"[TABLE_SETUP] Show fire icon: {show_fire_icon}. Processing {effective_num_coins} coins.")
         spinner_msg = f"Processing table for {effective_num_coins} crypto assets... (~{(effective_num_coins * 6.1 / 60):.1f} min)"
-        with st.spinner(spinner_msg): # Data processing loop unchanged from v1.4.7
+        with st.spinner(spinner_msg): 
             for i, coin_id_loop in enumerate(market_data_df.index): 
                 symbol_loop = next((s for s, cid in SYMBOL_TO_ID_MAP.items() if cid == coin_id_loop), "N/A"); log_prefix_coin = f"[TABLE_PROC({symbol_loop}|{coin_id_loop})]"
                 logger.info(f"{log_prefix_coin} Start ({i+1}/{effective_num_coins})")
@@ -444,18 +453,24 @@ try:
         if fetch_errors: st.sidebar.error("⚠️ Data Fetch/Processing Issues Encountered:"); 
             for err_item in fetch_errors: st.sidebar.caption(f" - {err_item}")
 
-        if results: # Table Display Section
+        if results: 
             try:
                 table_df = pd.DataFrame(results); table_df['Rank'] = pd.to_numeric(table_df['Rank'], errors='coerce'); table_df.set_index('Rank', inplace=True, drop=False) ; table_df.sort_index(inplace=True)
                 cols_order = [ "Rank", "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link"]
                 df_display = table_df[[col for col in cols_order if col in table_df.columns]].copy()
                 numeric_cols_for_formatting = [ f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"]
-                if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
+                
+                if IS_DEBUG_MODE: 
+                    # --- FIX: Unique keys for debug checkboxes from v1.4.6 are removed as IS_DEBUG_MODE controls this now ---
+                    logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
+                
                 for col in numeric_cols_for_formatting:
                     if col in df_display.columns: df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-                if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Post-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
+                
+                if IS_DEBUG_MODE:
+                    logger.debug("[TABLE_DEBUG] --- Post-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
 
-                def safe_formatter(fmt_str, col_name="<unknown>"): # Unchanged from v1.4.7
+                def safe_formatter(fmt_str, col_name="<unknown>"): 
                     def _format(x):
                         if pd.isna(x): return "N/A"
                         if not isinstance(x, (int, float, np.number)): logger.warning(f"[FORMAT_WARN] SafeFormatter: Non-numeric val '{x}' (type: {type(x)}) in col '{col_name}' for fmt '{fmt_str}'. Ret N/A."); return "N/A" 
@@ -469,8 +484,7 @@ try:
                 for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = safe_formatter("{:+.2f}%", col)
                 
-                # --- FIX for SyntaxError from v1.4.7 ---
-                def format_1h_with_icon(val):
+                def format_1h_with_icon(val): # Fixed syntax in v1.4.8
                     if pd.isna(val): return "N/A"
                     if not isinstance(val, (int, float, np.number)): 
                         logger.warning(f"[FORMAT_WARN] format_1h_with_icon got non-numeric: {val}")
@@ -481,7 +495,6 @@ try:
                     except Exception as e: 
                         logger.error(f"[FORMAT_ERR] format_1h_with_icon failed for numeric val '{val}': {e}")
                         return "N/A" 
-                # --- END FIX ---
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
 
                 rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]; srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
@@ -493,7 +506,6 @@ try:
                 ma_vwap_cols = [col for col in ma_value_cols_pattern if col in df_display.columns] 
                 for col in ma_vwap_cols: formatters[col] = safe_formatter("{:,.2f}", col)
                 
-                # Styling functions (unchanged from v1.4.7)
                 def highlight_signal_style(val): style = 'color: #6c757d; font-weight: normal;'; if isinstance(val, str):
                         if "Strong Buy" in val: style = 'color: #198754; font-weight: bold;'
                         elif "Buy" in val: style = 'color: #28a745;' ; elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
@@ -544,12 +556,11 @@ try:
             except Exception as df_err: logger.exception("[TABLE_ERROR] Error creating/styling table DataFrame:"); st.error(f"Error displaying table: {df_err}")
         else: st.warning("No valid crypto results to display in the table (all fetches might have failed).")
 
-    # Legend and Disclaimer (Unchanged from v1.4.7)
     st.divider();
-    with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False):
+    with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False): 
         st.markdown("""*Disclaimer: ... * **N/A:** Data Not Available ... **DYOR.**""", unsafe_allow_html=True) 
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v148", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.8 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v149", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.9 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
