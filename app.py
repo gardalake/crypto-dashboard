@@ -1,4 +1,4 @@
-# Version: v1.4 - Chart Section Fully Removed, Styler Fixes from v1.3 (Take 2)
+# Version: v1.4.2 - Password Check Removed, Fix NameError CACHE_CHART_TTL, MA_XLONG Note
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -53,33 +53,46 @@ logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Traditional tickers configured (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"
-CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # CACHE_CHART_TTL removed
+CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # CACHE_CHART_TTL removed as charts are removed
 DAYS_HISTORY_DAILY, DAYS_HISTORY_HOURLY = 365, 7
 RSI_PERIOD, RSI_OB, RSI_OS = 14, 70.0, 30.0
 SRSI_PERIOD, SRSI_K, SRSI_D, SRSI_OB, SRSI_OS = 14, 3, 3, 80.0, 20.0
 MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+# USER NOTE: MA_XLONG (30) is currently shorter than MA_LONG (50). Verify if this is intended.
 MA_SHORT, MA_MEDIUM, MA_LONG, MA_XLONG = 7, 20, 50, 30
 BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info("Finished global configuration.")
 
 # --- FUNCTION DEFINITIONS (General) ---
-def check_password():
-    logger.debug("Executing check_password.")
-    if "password_correct" not in st.session_state: st.session_state.password_correct = False
-    if not st.session_state.password_correct:
-        pwd_col, btn_col = st.columns([3, 1])
-        with pwd_col: password = st.text_input("🔑 Password", type="password", key="password_input_field")
-        with btn_col: st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True); login_button_pressed = st.button("Login", key="login_button")
-        should_check = login_button_pressed or (password and password != "")
-        if not should_check: logger.debug("Waiting for password input or button click."); st.stop()
-        else:
-            correct_password = "Leonardo"
-            if password == correct_password:
-                logger.info("Password correct."); st.session_state.password_correct = True
-                if st.query_params.get("logged_in") != "true": st.query_params["logged_in"] = "true"; st.rerun()
-            else: logger.warning("Incorrect password entered."); st.warning("Incorrect password."); st.stop()
-    logger.debug("Password check passed."); return True
+# def check_password(): # --- PASSWORD CHECK REMOVED ---
+#     logger.debug("Executing check_password.")
+#     if "password_correct" not in st.session_state: st.session_state.password_correct = False
+#     if not st.session_state.password_correct:
+#         pwd_col, btn_col = st.columns([3, 1])
+#         with pwd_col: password = st.text_input("🔑 Password", type="password", key="password_input_field")
+#         with btn_col: st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True); login_button_pressed = st.button("Login", key="login_button")
+#         should_check = login_button_pressed or (password and password != "")
+#         if not should_check: logger.debug("Waiting for password input or button click."); st.stop()
+#         else:
+#             try:
+#                 correct_password = st.secrets["APP_PASSWORD"]
+#                 if not correct_password:
+#                     raise KeyError
+#             except KeyError:
+#                 logger.error("CRITICAL: 'APP_PASSWORD' not found or is empty in Streamlit secrets (secrets.toml). Application cannot start securely if password check is enabled.")
+#                 st.error("Application Access Error: Password configuration missing. Please contact the administrator.")
+#                 st.stop()
+#             except Exception as e:
+#                 logger.error(f"CRITICAL: Unexpected error accessing 'APP_PASSWORD' from Streamlit secrets: {e}")
+#                 st.error(f"Application Access Error: Password configuration issue ({e}). Please contact the administrator.")
+#                 st.stop()
+#
+#             if password == correct_password:
+#                 logger.info("Password correct."); st.session_state.password_correct = True
+#                 if st.query_params.get("logged_in") != "true": st.query_params["logged_in"] = "true"; st.rerun()
+#             else: logger.warning("Incorrect password entered."); st.warning("Incorrect password."); st.stop()
+#     logger.debug("Password check passed."); return True
 
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
@@ -406,8 +419,9 @@ def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Seri
 # --- START OF MAIN APP EXECUTION ---
 logger.info("Starting main UI execution.")
 try:
-    if not check_password(): st.stop()
-    logger.info("Password check passed.")
+    # --- PASSWORD CHECK REMOVED ---
+    # if not check_password(): st.stop()
+    # logger.info("Password check passed.") # No longer needed
 
     # --- Title, Refresh Button, Timestamp ---
     col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
@@ -420,7 +434,8 @@ try:
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
 
     last_update_placeholder = st.empty()
-    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).") # Removed Chart TTL
+    # --- FIX: Removed CACHE_CHART_TTL from caption as it's no longer defined ---
+    st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
 
     # --- Market Overview Section ---
     st.markdown("---"); st.subheader("🌐 Market Overview")
@@ -544,7 +559,7 @@ try:
                         elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
                         elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;'
                         elif "CTB" in val: style = 'color: #20c997;'
-                        elif "CTS" in val: style = 'color: #ffc107; color: #000;'
+                        elif "CTS" in val: style = 'color: #ffc107; color: #000;' # Ensure text is visible on yellow
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
                     elif pd.isna(val): style = 'color: #adb5bd;'
@@ -569,8 +584,10 @@ try:
                 def style_stoch_rsi(row_subset):
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k_css = default_style; style_d_css = default_style
-                    original_row_index = row_subset.name
+                    original_row_index = row_subset.name # This is the index of the row in df_display
+                    
                     if original_row_index not in table_results_df.index:
+                         logger.warning(f"SRSI Style: Index {original_row_index} not found in table_results_df. SRSI style skipped for this row.")
                          return pd.Series([default_style, default_style], index=row_subset.index)
 
                     k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
@@ -583,9 +600,11 @@ try:
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
                         else: style_str = default_style
                         style_k_css = style_str; style_d_css = style_str
+                    elif pd.isna(k_val_num) and pd.isna(d_val_num):
+                        style_k_css = 'color: #adb5bd;'
+                        style_d_css = 'color: #adb5bd;'
                     
-                    # Return a Series of styles matching the index of the input row_subset
-                    output_styles = pd.Series('', index=row_subset.index)
+                    output_styles = pd.Series('', index=row_subset.index, dtype=str)
                     if k_col in row_subset.index: output_styles[k_col] = style_k_css
                     if d_col in row_subset.index: output_styles[d_col] = style_d_css
                     return output_styles
@@ -651,37 +670,7 @@ try:
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
 
     # --- Chart Section (REMOVED in v1.4) ---
-    # st.divider(); st.subheader("💹 Detailed Coin Chart")
-    # sel_col, price_col = st.columns([3, 1])
-    # with sel_col: chart_symbol = st.selectbox("Select coin for chart:", options=SYMBOLS, index=0, key="chart_coin_selector")
-    # with price_col:
-    #     st.write(""); st.write("")
-    #     if chart_symbol:
-    #         chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
-    #         if chart_coin_id and not market_data_df.empty and chart_coin_id in market_data_df.index:
-    #              latest_price = market_data_df.loc[chart_coin_id].get('current_price', np.nan)
-    #              if pd.notna(latest_price): st.metric(label=f"Current Price {chart_symbol}", value=f"${latest_price:,.4f}")
-    #              else: st.caption(f"Current price N/A")
-    #         else: st.caption(f"Current price N/A")
-    #
-    # chart_placeholder = st.empty()
-    # if chart_symbol:
-    #     chart_coin_id = SYMBOL_TO_ID_MAP.get(chart_symbol)
-    #     if chart_coin_id:
-    #         logger.info(f"CHART: Attempting to load data for {chart_symbol} ({chart_coin_id}) chart.")
-    #         with chart_placeholder:
-    #              with st.spinner(f"Loading data and chart for {chart_symbol}..."):
-    #                 # chart_hist_df, chart_status = get_coingecko_historical_data_for_chart(chart_coin_id, VS_CURRENCY, DAYS_HISTORY_DAILY) # Function removed
-    #                 chart_status = "Chart functionality removed" # Placeholder
-    #                 chart_hist_df = pd.DataFrame() # Placeholder
-    #
-    #                 if chart_status == "Success" and not chart_hist_df.empty:
-    #                     # fig = create_coin_chart(chart_hist_df.copy(), chart_symbol) # Function removed
-    #                     fig = None # Placeholder
-    #                     if fig: st.plotly_chart(fig, use_container_width=True); logger.info(f"CHART: Chart for {chart_symbol} displayed.")
-    #                     else: st.error(f"Could not generate chart for {chart_symbol} (indicator calculation or internal error, see log).")
-    #                 else: logger.error(f"CHART: Failed to load historical data for {chart_symbol}. Status: {chart_status}"); st.error(f"Could not load historical data for {chart_symbol} chart. ({chart_status})")
-    #     else: st.error(f"CoinGecko ID not found for symbol {chart_symbol}."); logger.error(f"CHART: CoinGecko ID not found for {chart_symbol} in map.")
+    # ... (Chart code remains commented out as per v1.4)
 
 
     # --- Legend (Improved v1.1) ---
@@ -705,6 +694,7 @@ try:
             *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Overbought (K&D > 80).
             *   <span style="color:#28a745;">Values (Green)</span>: Bullish Crossover (K > D).
             *   <span style="color:#fd7e14;">Values (Orange)</span>: Bearish Crossover (K < D).
+            *   <span style="color:#adb5bd;">Values (Light Grey)</span>: N/A.
         *   **MACD Hist (1d):** MACD Histogram.
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
