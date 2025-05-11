@@ -1,4 +1,4 @@
-# Version: v1.4.9 - Fix IndentationError in get_traditional_market_data_av
+# Version: v1.4.10 - Fix SyntaxError in generate_gpt_signal
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 IS_DEBUG_MODE = False
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
-logger.info(f"Logging configured for UI (v1.4.9 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
+logger.info(f"Logging configured for UI (v1.4.10 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
 
 try:
     from zoneinfo import ZoneInfo
@@ -38,7 +38,7 @@ st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", p
 st.markdown("""<style>div[data-testid="stMetricValue"] { font-size: 14px !important; }</style>""", unsafe_allow_html=True)
 logger.info("[UI_SETUP] CSS applied.")
 
-# --- Global Configuration ---
+# --- Global Configuration (Unchanged from v1.4.9) ---
 logger.info("[CONFIG] Starting global configuration.")
 SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "RNDR": "render-token",
@@ -63,7 +63,7 @@ VWAP_PERIOD = 14
 logger.info(f"[CONFIG] Global config done: {NUM_COINS} coins ({','.join(SYMBOLS[:3])}...), Trad Tickers: {len(TRAD_TICKERS_AV)}.")
 
 # --- FUNCTION DEFINITIONS (General) ---
-def format_large_number(num):
+def format_large_number(num): # Unchanged from v1.4.9
     if pd.isna(num) or not isinstance(num, (int, float, np.number)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
     if num_abs < 1_000_000: return f"{sign}{num_abs:,.0f}"
@@ -72,7 +72,7 @@ def format_large_number(num):
     else: return f"{sign}{num_abs / 1_000_000_000_000:.2f}T"
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading market data (CoinGecko)...")
-def get_coingecko_market_data(ids_list, currency):
+def get_coingecko_market_data(ids_list, currency): # Unchanged from v1.4.9
     func_tag = "[API_CG_LIVE]"; logger.info(f"{func_tag} Attempting fetch for {len(ids_list)} IDs.")
     ids_string = ",".join(ids_list); url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {'vs_currency': currency, 'ids': ids_string, 'order': 'market_cap_desc', 'per_page': str(len(ids_list)), 'page': 1, 'sparkline': False, 'price_change_percentage': '1h,24h,7d,30d,1y', 'precision': 'full'}
@@ -97,7 +97,7 @@ def get_coingecko_market_data(ids_list, currency):
     except Exception as e: logger.exception(f"{func_tag}[PROC_ERROR] Error Processing CG Market Data from {url}:"); st.error(f"Error Processing CoinGecko Market Data: {e}"); return pd.DataFrame(), timestamp_utc
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
-def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
+def get_coingecko_historical_data(coin_id, currency, days, interval='daily'): # Unchanged from v1.4.9
     func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0)
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval, 'precision': 'full'}; status_msg = "Unknown Error"
     try:
@@ -123,7 +123,7 @@ def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
     except Exception as e: status_msg = f"Generic Err ({type(e).__name__})"; logger.exception(f"{func_tag}[PROC_ERROR] Error processing CG Hist:"); return pd.DataFrame(), status_msg
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_fear_greed_index():
+def get_fear_greed_index(): # Unchanged from v1.4.9
     func_tag = "[API_FG_INDEX]"; logger.info(f"{func_tag} Attempting fetch."); url = "https://api.alternative.me/fng/?limit=1"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json()
@@ -135,7 +135,7 @@ def get_fear_greed_index():
     except Exception as e: msg = f"{func_tag}[PROC_ERROR] Error Processing: {e}"; logger.exception(msg); st.sidebar.warning(f"F&G Index Processing Error"); return "N/A"
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_global_market_data_cg(currency):
+def get_global_market_data_cg(currency): # Unchanged from v1.4.9
     func_tag = "[API_CG_GLOBAL]"; logger.info(f"{func_tag} Attempting fetch for {currency.upper()}."); url = "https://api.coingecko.com/api/v3/global"
     try:
         response = requests.get(url, timeout=10); response.raise_for_status(); data = response.json().get('data', {})
@@ -146,10 +146,10 @@ def get_global_market_data_cg(currency):
     except requests.exceptions.RequestException as req_ex: msg = f"{func_tag}[ERROR] API Error: {req_ex}"; logger.warning(msg); st.sidebar.warning(f"Global MCap API Error"); return np.nan
     except Exception as e: msg = f"{func_tag}[PROC_ERROR] Error Processing: {e}"; logger.exception(msg); st.sidebar.warning(f"Global MCap Processing Error"); return np.nan
 
-def get_etf_flow(): logger.debug("[DATA_ETF] get_etf_flow called (placeholder)."); return "N/A"
+def get_etf_flow(): logger.debug("[DATA_ETF] get_etf_flow called (placeholder)."); return "N/A" # Unchanged
 
 @st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Loading traditional market data (Alpha Vantage)...")
-def get_traditional_market_data_av(tickers):
+def get_traditional_market_data_av(tickers): # Fixed IndentationError from v1.4.8
     func_tag = "[API_AV]"; logger.info(f"{func_tag} Attempting fetch for {len(tickers)} tickers."); data = {ticker: {'price': np.nan, 'change': np.nan, 'change_percent': 'N/A'} for ticker in tickers}; api_key = None
     try: api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]; logger.info(f"{func_tag} API key read from secrets.")
     except KeyError: logger.error(f"{func_tag}[CONFIG_ERROR] Secret 'ALPHA_VANTAGE_API_KEY' not defined."); st.sidebar.error("AlphaVantage Key Missing"); return data
@@ -175,7 +175,7 @@ def get_traditional_market_data_av(tickers):
             logger.warning(msg)
             st.sidebar.warning(f"AV Error ({ticker_sym}): Limit likely") 
             ve_str = str(ve).lower()
-            # --- FIX: Correct indentation for this if statement ---
+            # --- FIX: Corrected indentation for this if statement ---
             if "call frequency" in ve_str or "api key" in ve_str or \
                "limit" in ve_str or "premium" in ve_str:
                 logger.error(f"{func_tag}[CRITICAL_API_ERROR] Critical AV API key/limit error detected. Stopping fetch.")
@@ -186,7 +186,7 @@ def get_traditional_market_data_av(tickers):
             logger.exception(msg); st.sidebar.warning(f"AV Error ({ticker_sym})");
     logger.info(f"{func_tag} Finished fetch. Made {calls_made} calls."); return data
 
-# --- Indicator Calculation Functions ---
+# --- Indicator Calculation Functions (Unchanged from v1.4.8) ---
 def _ensure_numeric_series(series: pd.Series, func_name_parent="indicator_calc") -> pd.Series:
     if not isinstance(series, pd.Series): logger.debug(f"[{func_name_parent}|DATA_CLEAN] Input is not a Series, returning empty numeric series."); return pd.Series(dtype=float)
     if series.empty: logger.debug(f"[{func_name_parent}|DATA_CLEAN] Input series is empty, returning as is."); return series
@@ -295,7 +295,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     _, _, _, bb_pct_b, bb_width, bb_width_chg = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV, symbol=symbol)
     indicators["BB %B"], indicators["BB Width"], indicators["BB Width %Chg"] = bb_pct_b, bb_width, bb_width_chg
     vwap_df_ready = df_for_vwap_calc.dropna(subset=['close', 'volume']) 
-    if not vwap_df_ready.empty and len(vwap_df_ready) >= VWAP_PERIOD : # Check length for VWAP calc
+    if not vwap_df_ready.empty and len(vwap_df_ready) >= VWAP_PERIOD :
         indicators["VWAP (1d)"] = calculate_vwap_manual(vwap_df_ready.iloc[-VWAP_PERIOD:], VWAP_PERIOD, symbol=symbol)
         if len(vwap_df_ready) >= VWAP_PERIOD + 1: 
             vwap_today = indicators["VWAP (1d)"]
@@ -319,7 +319,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Calculated indicators: { {k:v for k,v in indicators.items() if pd.notna(v)} }")
     return indicators
 
-def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price): 
+def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
     except: current_price_num = np.nan
     numeric_inputs = [rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price_num]
@@ -354,7 +354,23 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, 
     if pd.notna(bb_width_chg):
         if bb_width_chg > 5: score += 0.5 
         elif bb_width_chg < -5: score -= 0.25
-    if score >= 6.0: return "⚡️ Strong Buy"; elif score >= 3.0: return "🟢 Buy"; elif score <= -6.0: return "🚨 Strong Sell"; elif score <= -3.0: return "🔴 Sell"; elif score > 0: return "⏳ CTB"; elif score < 0: return "⚠️ CTS"; else: return "🟡 Hold"
+    
+    # --- FIX for SyntaxError from v1.4.9 ---
+    if score >= 6.0:
+        return "⚡️ Strong Buy"
+    elif score >= 3.0:
+        return "🟢 Buy"
+    elif score <= -6.0:
+        return "🚨 Strong Sell"
+    elif score <= -3.0:
+        return "🔴 Sell"
+    elif score > 0:
+        return "⏳ CTB"
+    elif score < 0:
+        return "⚠️ CTS"
+    else:
+        return "🟡 Hold"
+    # --- END FIX ---
 
 def generate_gemini_alert(ma_medium_val, ma_long_val, macd_hist, rsi_1d, vwap_1d, current_price):
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
@@ -374,7 +390,7 @@ try:
     col_title, _, col_button = st.columns([4, 1, 1]); 
     with col_title: st.title("📈 Crypto Technical Dashboard Pro")
     with col_button: st.write(""); 
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v149"): 
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1410"): 
             logger.info("[UI_ACTION] Refresh button clicked.");
             if 'api_warning_shown' in st.session_state: del st.session_state['api_warning_shown']
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
@@ -460,15 +476,10 @@ try:
                 df_display = table_df[[col for col in cols_order if col in table_df.columns]].copy()
                 numeric_cols_for_formatting = [ f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"]
                 
-                if IS_DEBUG_MODE: 
-                    # --- FIX: Unique keys for debug checkboxes from v1.4.6 are removed as IS_DEBUG_MODE controls this now ---
-                    logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
-                
+                if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
                 for col in numeric_cols_for_formatting:
                     if col in df_display.columns: df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-                
-                if IS_DEBUG_MODE:
-                    logger.debug("[TABLE_DEBUG] --- Post-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
+                if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Post-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
 
                 def safe_formatter(fmt_str, col_name="<unknown>"): 
                     def _format(x):
@@ -484,17 +495,12 @@ try:
                 for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = safe_formatter("{:+.2f}%", col)
                 
-                def format_1h_with_icon(val): # Fixed syntax in v1.4.8
+                def format_1h_with_icon(val): 
                     if pd.isna(val): return "N/A"
-                    if not isinstance(val, (int, float, np.number)): 
-                        logger.warning(f"[FORMAT_WARN] format_1h_with_icon got non-numeric: {val}")
-                        return "N/A"
+                    if not isinstance(val, (int, float, np.number)): logger.warning(f"[FORMAT_WARN] format_1h_with_icon got non-numeric: {val}"); return "N/A"
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
-                    try:
-                        return f"{icon}{val:+.2f}%"
-                    except Exception as e: 
-                        logger.error(f"[FORMAT_ERR] format_1h_with_icon failed for numeric val '{val}': {e}")
-                        return "N/A" 
+                    try: return f"{icon}{val:+.2f}%"
+                    except Exception as e: logger.error(f"[FORMAT_ERR] format_1h_with_icon failed for numeric val '{val}': {e}"); return "N/A" 
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
 
                 rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]; srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
@@ -562,5 +568,5 @@ try:
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v149", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.9 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1410", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.10 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
