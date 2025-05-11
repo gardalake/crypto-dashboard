@@ -1,4 +1,4 @@
-# Version: v1.4.12 - Fix IndentationError for fetch_errors display
+# Version: v1.4.14 - Remove RSI (1mo), Verify Signal Col Formatting, General Check
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -22,10 +22,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # --- END: Logging Configuration ---
 
-IS_DEBUG_MODE = False
+IS_DEBUG_MODE = False 
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
-logger.info(f"Logging configured for UI (v1.4.12 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
+logger.info(f"Logging configured for UI (v1.4.14 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
 
 try:
     from zoneinfo import ZoneInfo
@@ -38,7 +38,7 @@ st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", p
 st.markdown("""<style>div[data-testid="stMetricValue"] { font-size: 14px !important; }</style>""", unsafe_allow_html=True)
 logger.info("[UI_SETUP] CSS applied.")
 
-# --- Global Configuration (Unchanged from v1.4.11) ---
+# --- Global Configuration ---
 logger.info("[CONFIG] Starting global configuration.")
 SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "RNDR": "render-token",
@@ -63,10 +63,6 @@ VWAP_PERIOD = 14
 logger.info(f"[CONFIG] Global config done: {NUM_COINS} coins ({','.join(SYMBOLS[:3])}...), Trad Tickers: {len(TRAD_TICKERS_AV)}.")
 
 # --- FUNCTION DEFINITIONS (General) ---
-# format_large_number, API fetch functions (get_coingecko_market_data, get_coingecko_historical_data, get_fear_greed_index, get_global_market_data_cg, get_traditional_market_data_av)
-# and Indicator calculation functions (_ensure_numeric_series, calculate_xxx_manual, compute_all_indicators)
-# are unchanged from v1.4.11. They are assumed correct for this fix.
-
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float, np.number)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
@@ -180,7 +176,7 @@ def get_traditional_market_data_av(tickers):
             st.sidebar.warning(f"AV Error ({ticker_sym}): Limit likely") 
             ve_str = str(ve).lower()
             if "call frequency" in ve_str or "api key" in ve_str or \
-               "limit" in ve_str or "premium" in ve_str:
+               "limit" in ve_str or "premium" in ve_str: 
                 logger.error(f"{func_tag}[CRITICAL_API_ERROR] Critical AV API key/limit error detected. Stopping fetch.")
                 st.sidebar.error("AV API Limit Reached! Fetch stopped.") 
                 break 
@@ -280,7 +276,8 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     func_tag = f"[COMPUTE_ALL({symbol})]"
-    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "RSI (1mo)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
+    # --- MODIFICATION: Removed RSI (1mo) ---
+    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     if hist_daily_df.empty or 'close' not in hist_daily_df.columns: logger.warning(f"{func_tag}[DATA_WARN] Empty/invalid daily historical data. Cannot compute indicators."); return indicators
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Input hist_daily_df shape: {hist_daily_df.shape}. Head:\n{hist_daily_df.head(2).to_string()}")
     close_series_numeric = pd.to_numeric(hist_daily_df['close'], errors='coerce')
@@ -314,15 +311,16 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
             if len(df_weekly) >= RSI_PERIOD + 1: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD, symbol=f"{symbol}-1W")
             else: logger.debug(f"{func_tag}[INSUFF_DATA] RSI(1w): {len(df_weekly)}/{RSI_PERIOD+1} rows.")
         except Exception as e: logger.exception(f"{func_tag}[ERROR] Calculating weekly RSI:")
-        try:
-            df_monthly = close_daily.resample('ME').last().dropna()
-            if len(df_monthly) >= RSI_PERIOD + 1: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD, symbol=f"{symbol}-1Mo")
-            else: logger.debug(f"{func_tag}[INSUFF_DATA] RSI(1mo): {len(df_monthly)}/{RSI_PERIOD+1} rows.")
-        except Exception as e: logger.exception(f"{func_tag}[ERROR] Calculating monthly RSI:")
+        # --- MODIFICATION: Removed RSI (1mo) calculation ---
+        # try:
+        #     df_monthly = close_daily.resample('ME').last().dropna()
+        #     if len(df_monthly) >= RSI_PERIOD + 1: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD, symbol=f"{symbol}-1Mo")
+        #     else: logger.debug(f"{func_tag}[INSUFF_DATA] RSI(1mo): {len(df_monthly)}/{RSI_PERIOD+1} rows.")
+        # except Exception as e: logger.exception(f"{func_tag}[ERROR] Calculating monthly RSI:")
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Calculated indicators: { {k:v for k,v in indicators.items() if pd.notna(v)} }")
     return indicators
 
-def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price): 
+def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
     except: current_price_num = np.nan
     numeric_inputs = [rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price_num]
@@ -386,8 +384,7 @@ try:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") 
-        # --- FIX: Corrected indentation ---
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1411"): 
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1413"): 
             logger.info("[UI_ACTION] Refresh button clicked.")
             if 'api_warning_shown' in st.session_state:
                 del st.session_state['api_warning_shown']
@@ -464,22 +461,40 @@ try:
                 else: indicators = compute_all_indicators(symbol_loop, hist_df)
                 gpt_signal_val = generate_gpt_signal(indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("BB %B"), indicators.get("BB Width %Chg"), indicators.get("VWAP (1d)"), current_price_val)
                 gemini_alert_val = generate_gemini_alert(indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price_val)
-                results.append({ "Rank": live_coin_data.get('market_cap_rank', np.nan), "Symbol": symbol_loop, "Name": live_coin_data.get('name', coin_id_loop), "MA/MACD Cross Alert": gemini_alert_val, "Composite Score": gpt_signal_val, f"Price ({VS_CURRENCY.upper()})": current_price_val, "% 1h": live_coin_data.get('price_change_percentage_1h_in_currency', np.nan), "% 24h": live_coin_data.get('price_change_percentage_24h_in_currency', np.nan), "% 7d": live_coin_data.get('price_change_percentage_7d_in_currency', np.nan), "% 30d": live_coin_data.get('price_change_percentage_30d_in_currency', np.nan), "% 1y": live_coin_data.get('price_change_percentage_1y_in_currency', np.nan), **indicators, f"Volume 24h ({VS_CURRENCY.upper()})": live_coin_data.get('total_volume', np.nan), "Link": f"https://www.coingecko.com/en/coins/{coin_id_loop}"})
+                
+                # --- MODIFICATION: Append dictionary, excluding RSI (1mo) if it's not calculated ---
+                result_data = { "Rank": live_coin_data.get('market_cap_rank', np.nan), "Symbol": symbol_loop, "Name": live_coin_data.get('name', coin_id_loop), 
+                               "MA/MACD Cross Alert": gemini_alert_val, "Composite Score": gpt_signal_val, 
+                               f"Price ({VS_CURRENCY.upper()})": current_price_val, 
+                               "% 1h": live_coin_data.get('price_change_percentage_1h_in_currency', np.nan), 
+                               "% 24h": live_coin_data.get('price_change_percentage_24h_in_currency', np.nan), 
+                               "% 7d": live_coin_data.get('price_change_percentage_7d_in_currency', np.nan), 
+                               "% 30d": live_coin_data.get('price_change_percentage_30d_in_currency', np.nan), 
+                               "% 1y": live_coin_data.get('price_change_percentage_1y_in_currency', np.nan), 
+                               f"Volume 24h ({VS_CURRENCY.upper()})": live_coin_data.get('total_volume', np.nan), 
+                               "Link": f"https://www.coingecko.com/en/coins/{coin_id_loop}"}
+                # Add indicators, explicitly excluding RSI (1mo) as it's removed from calculation
+                for ind_key, ind_val in indicators.items():
+                    if ind_key != "RSI (1mo)": # Ensure it's not added if accidentally present
+                        result_data[ind_key] = ind_val
+                results.append(result_data)
+                # --- END MODIFICATION ---
                 logger.info(f"{log_prefix_coin} End processing.")
             logger.info(f"[TABLE_PROC_DONE] Table processing loop finished. Time: {time.time() - process_start_time:.1f}s")
         
         if fetch_errors:
             st.sidebar.error("⚠️ Data Fetch/Processing Issues Encountered:")
-            # --- FIX: Corrected indentation for this for loop ---
             for err_item in fetch_errors:
                 st.sidebar.caption(f" - {err_item}")
         
         if results: 
             try:
                 table_df = pd.DataFrame(results); table_df['Rank'] = pd.to_numeric(table_df['Rank'], errors='coerce'); table_df.set_index('Rank', inplace=True, drop=False) ; table_df.sort_index(inplace=True)
-                cols_order = [ "Rank", "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link"]
+                # --- MODIFICATION: Removed RSI (1mo) from cols_order ---
+                cols_order = [ "Rank", "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link"]
                 df_display = table_df[[col for col in cols_order if col in table_df.columns]].copy()
-                numeric_cols_for_formatting = [ f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"]
+                # --- MODIFICATION: Removed RSI (1mo) from numeric_cols_for_formatting ---
+                numeric_cols_for_formatting = [ f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"]
                 
                 if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
                 for col in numeric_cols_for_formatting:
@@ -508,8 +523,10 @@ try:
                     except Exception as e: logger.error(f"[FORMAT_ERR] format_1h_with_icon failed for numeric val '{val}': {e}"); return "N/A" 
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
 
-                rsi_cols_list = [c for c in df_display.columns if "RSI" in c and "%" not in c and "SRSI" not in c]; srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
-                for col in rsi_cols_list + srsi_value_cols:
+                # --- MODIFICATION: Removed RSI (1mo) from rsi_cols_list logic if it was there ---
+                rsi_cols_list = [c for c in df_display.columns if "RSI (" in c and "SRSI" not in c and "%" not in c and "1mo" not in c] # More specific
+                srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
+                for col in rsi_cols_list + srsi_value_cols: # RSI (1mo) won't be in rsi_cols_list
                      if col in df_display.columns: formatters[col] = safe_formatter("{:.1f}", col)
                 macd_hist_col_name = "MACD Hist (1d)"
                 if macd_hist_col_name in df_display.columns: formatters[macd_hist_col_name] = safe_formatter("{:+.4f}", macd_hist_col_name)
@@ -517,12 +534,20 @@ try:
                 ma_vwap_cols = [col for col in ma_value_cols_pattern if col in df_display.columns] 
                 for col in ma_vwap_cols: formatters[col] = safe_formatter("{:,.2f}", col)
                 
-                def highlight_signal_style(val): style = 'color: #6c757d; font-weight: normal;'; if isinstance(val, str):
+                def highlight_signal_style(val):
+                    style = 'color: #6c757d; font-weight: normal;'
+                    if isinstance(val, str):
                         if "Strong Buy" in val: style = 'color: #198754; font-weight: bold;'
-                        elif "Buy" in val: style = 'color: #28a745;' ; elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
-                        elif "Sell" in val: style = 'color: #fd7e14;' ; elif "CTB" in val: style = 'color: #20c997;'
-                        elif "CTS" in val: style = 'color: #ffc107; color: #000;' ; elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): style = 'color: #adb5bd;' ; return style
+                        elif "Buy" in val: style = 'color: #28a745;' 
+                        elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
+                        elif "Sell" in val: style = 'color: #fd7e14;' 
+                        elif "CTB" in val: style = 'color: #20c997;'
+                        elif "CTS" in val: style = 'color: #ffc107; color: #000;' 
+                        elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
+                    elif pd.isna(val): 
+                        style = 'color: #adb5bd;' 
+                    return style
+
                 def highlight_pct_col_style(val): 
                     if pd.isna(val): return 'color: #adb5bd;' ;  
                     if not isinstance(val, (int, float, np.number)): return '' 
@@ -556,7 +581,7 @@ try:
                     if col_name in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col_name])
                 cols_for_pct_style_apply = [col for col in pct_cols_all if col in df_display.columns]
                 if cols_for_pct_style_apply: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style_apply)
-                rsi_cols_to_style_apply = [col for col in rsi_cols_list if col in df_display.columns]
+                rsi_cols_to_style_apply = [col for col in rsi_cols_list if col in df_display.columns] # RSI (1mo) will not be here
                 if rsi_cols_to_style_apply: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style_apply)
                 if macd_hist_col_name in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=[macd_hist_col_name])
                 srsi_cols_exist_apply = all(col in df_display.columns for col in srsi_value_cols)
@@ -569,9 +594,57 @@ try:
 
     st.divider();
     with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False): 
-        st.markdown("""*Disclaimer: ... * **N/A:** Data Not Available ... **DYOR.**""", unsafe_allow_html=True) 
+        # --- MODIFICATION: Updated legend to remove RSI (1mo) ---
+        st.markdown("""
+        *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
+
+        **Market Overview:** (See above section for details)
+
+        **Crypto Technical Analysis Table:**
+        *   **Rank:** Market cap rank (CoinGecko).
+        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** (See colors below).
+        *   **Price:** Current price ($) (CoinGecko).
+        *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive. 🔥 Icon on % 1h indicates market breadth (>=8 coins positive).
+        *   **RSI (1d, 1w):** Relative Strength Index (0-100).
+            *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought.
+            *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold.
+            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
+        *   **SRSI %K / %D (1d):** Stochastic RSI (0-100).
+            *   <span style="color:#198754; font-weight:bold;">Values (Bold Green)</span>: Oversold (K&D < 20).
+            *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Overbought (K&D > 80).
+            *   <span style="color:#28a745;">Values (Green)</span>: Bullish Crossover (K > D).
+            *   <span style="color:#fd7e14;">Values (Orange)</span>: Bearish Crossover (K < D).
+            *   <span style="color:#adb5bd;">Values (Light Grey)</span>: N/A.
+        *   **MACD Hist (1d):** MACD Histogram.
+            *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
+            *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
+            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
+        *   **MA(7d/20d/30d/50d):** Simple Moving Averages. *Values not colored, N/A if insufficient data.*
+        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev).
+            *   **%B (%):** Price position relative to bands (%). <span style="color:red;">Red</span>/<span style="color:green;">Green</span>. <span style="color:#adb5bd;">N/A</span> if calc fails.
+            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/<span style="color:green;">Green</span>. <span style="color:#adb5bd;">N/A</span> if calc fails.
+            *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening. <span style="color:#adb5bd;">N/A</span> if calc fails.
+        *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored, N/A if insufficient data.*
+        *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing. <span style="color:#adb5bd;">N/A</span> if calc fails.
+        *   **Volume 24h:** Trading volume ($) (CoinGecko).
+        *   **Link:** CoinGecko page link.
+        *   **N/A:** Data Not Available (typically due to API errors or insufficient history).
+
+        **Signal Column Colors & Meanings:**
+        *   <span style="color:#198754; font-weight:bold;">⚡️ Strong Buy</span> / <span style="color:#28a745;">🟢 Buy</span>: Bullish.
+        *   <span style="color:#dc3545; font-weight:bold;">🚨 Strong Sell</span> / <span style="color:#fd7e14;">🔴 Sell</span>: Bearish.
+        *   <span style="color:#20c997;">⏳ CTB</span>: Monitor (Buy).
+        *   <span style="color:#ffc107; color:#000;">⚠️ CTS</span>: Monitor (Sell).
+        *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral.
+        *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
+
+        **Important Notes:**
+        *   Table data fetch includes a 6s delay per coin. API rate limits may still cause data gaps (shown as N/A).
+        *   Traditional Market data has a **4h cache**. Alpha Vantage free tier has daily limits.
+        *   **DYOR (Do Your Own Research).**
+        """, unsafe_allow_html=True) 
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1412", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.12 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1413", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.13 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
