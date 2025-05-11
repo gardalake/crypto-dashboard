@@ -1,4 +1,4 @@
-# Version: v1.4.11 - Fix IndentationError for refresh button
+# Version: v1.4.12 - Fix IndentationError for fetch_errors display
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 IS_DEBUG_MODE = False
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
-logger.info(f"Logging configured for UI (v1.4.11 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
+logger.info(f"Logging configured for UI (v1.4.12 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
 
 try:
     from zoneinfo import ZoneInfo
@@ -38,7 +38,7 @@ st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", p
 st.markdown("""<style>div[data-testid="stMetricValue"] { font-size: 14px !important; }</style>""", unsafe_allow_html=True)
 logger.info("[UI_SETUP] CSS applied.")
 
-# --- Global Configuration (Unchanged from v1.4.10) ---
+# --- Global Configuration (Unchanged from v1.4.11) ---
 logger.info("[CONFIG] Starting global configuration.")
 SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "RNDR": "render-token",
@@ -65,7 +65,7 @@ logger.info(f"[CONFIG] Global config done: {NUM_COINS} coins ({','.join(SYMBOLS[
 # --- FUNCTION DEFINITIONS (General) ---
 # format_large_number, API fetch functions (get_coingecko_market_data, get_coingecko_historical_data, get_fear_greed_index, get_global_market_data_cg, get_traditional_market_data_av)
 # and Indicator calculation functions (_ensure_numeric_series, calculate_xxx_manual, compute_all_indicators)
-# are unchanged from v1.4.10. They are assumed correct for this fix.
+# are unchanged from v1.4.11. They are assumed correct for this fix.
 
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float, np.number)): return "N/A"
@@ -180,7 +180,7 @@ def get_traditional_market_data_av(tickers):
             st.sidebar.warning(f"AV Error ({ticker_sym}): Limit likely") 
             ve_str = str(ve).lower()
             if "call frequency" in ve_str or "api key" in ve_str or \
-               "limit" in ve_str or "premium" in ve_str: # Indentation fixed here
+               "limit" in ve_str or "premium" in ve_str:
                 logger.error(f"{func_tag}[CRITICAL_API_ERROR] Critical AV API key/limit error detected. Stopping fetch.")
                 st.sidebar.error("AV API Limit Reached! Fetch stopped.") 
                 break 
@@ -322,7 +322,7 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Calculated indicators: { {k:v for k,v in indicators.items() if pd.notna(v)} }")
     return indicators
 
-def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
+def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price): 
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
     except: current_price_num = np.nan
     numeric_inputs = [rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price_num]
@@ -358,20 +358,13 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, 
         if bb_width_chg > 5: score += 0.5 
         elif bb_width_chg < -5: score -= 0.25
     
-    if score >= 6.0:
-        return "⚡️ Strong Buy"
-    elif score >= 3.0:
-        return "🟢 Buy"
-    elif score <= -6.0:
-        return "🚨 Strong Sell"
-    elif score <= -3.0:
-        return "🔴 Sell"
-    elif score > 0:
-        return "⏳ CTB"
-    elif score < 0:
-        return "⚠️ CTS"
-    else:
-        return "🟡 Hold"
+    if score >= 6.0: return "⚡️ Strong Buy"
+    elif score >= 3.0: return "🟢 Buy"
+    elif score <= -6.0: return "🚨 Strong Sell"
+    elif score <= -3.0: return "🔴 Sell"
+    elif score > 0: return "⏳ CTB"
+    elif score < 0: return "⚠️ CTS"
+    else: return "🟡 Hold"
 
 def generate_gemini_alert(ma_medium_val, ma_long_val, macd_hist, rsi_1d, vwap_1d, current_price):
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
@@ -393,7 +386,7 @@ try:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") 
-        # --- FIX: Corrected indentation for the if statement ---
+        # --- FIX: Corrected indentation ---
         if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1411"): 
             logger.info("[UI_ACTION] Refresh button clicked.")
             if 'api_warning_shown' in st.session_state:
@@ -474,9 +467,13 @@ try:
                 results.append({ "Rank": live_coin_data.get('market_cap_rank', np.nan), "Symbol": symbol_loop, "Name": live_coin_data.get('name', coin_id_loop), "MA/MACD Cross Alert": gemini_alert_val, "Composite Score": gpt_signal_val, f"Price ({VS_CURRENCY.upper()})": current_price_val, "% 1h": live_coin_data.get('price_change_percentage_1h_in_currency', np.nan), "% 24h": live_coin_data.get('price_change_percentage_24h_in_currency', np.nan), "% 7d": live_coin_data.get('price_change_percentage_7d_in_currency', np.nan), "% 30d": live_coin_data.get('price_change_percentage_30d_in_currency', np.nan), "% 1y": live_coin_data.get('price_change_percentage_1y_in_currency', np.nan), **indicators, f"Volume 24h ({VS_CURRENCY.upper()})": live_coin_data.get('total_volume', np.nan), "Link": f"https://www.coingecko.com/en/coins/{coin_id_loop}"})
                 logger.info(f"{log_prefix_coin} End processing.")
             logger.info(f"[TABLE_PROC_DONE] Table processing loop finished. Time: {time.time() - process_start_time:.1f}s")
-        if fetch_errors: st.sidebar.error("⚠️ Data Fetch/Processing Issues Encountered:"); 
-            for err_item in fetch_errors: st.sidebar.caption(f" - {err_item}")
-
+        
+        if fetch_errors:
+            st.sidebar.error("⚠️ Data Fetch/Processing Issues Encountered:")
+            # --- FIX: Corrected indentation for this for loop ---
+            for err_item in fetch_errors:
+                st.sidebar.caption(f" - {err_item}")
+        
         if results: 
             try:
                 table_df = pd.DataFrame(results); table_df['Rank'] = pd.to_numeric(table_df['Rank'], errors='coerce'); table_df.set_index('Rank', inplace=True, drop=False) ; table_df.sort_index(inplace=True)
@@ -576,5 +573,5 @@ try:
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1411", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.11 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1412", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.12 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
