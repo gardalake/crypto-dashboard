@@ -1,4 +1,4 @@
-# Version: v1.4.14 - Fix SyntaxErrors in styling functions, Remove RSI (1mo)
+# Version: v1.4.15 - Fix SyntaxError in style_stoch_rsi
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 IS_DEBUG_MODE = False
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
-logger.info(f"Logging configured for UI (v1.4.14 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
+logger.info(f"Logging configured for UI (v1.4.15 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
 
 try:
     from zoneinfo import ZoneInfo
@@ -540,7 +540,6 @@ try:
                     if not isinstance(val, (int, float, np.number)): return '' 
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
                 
-                # --- FIX for SyntaxError from v1.4.13 ---
                 def style_rsi(val): 
                     if pd.isna(val):
                         return 'color: #adb5bd;'
@@ -564,18 +563,29 @@ try:
                         return 'color: red;'
                     else: 
                         return '' 
-                # --- END FIX ---
 
                 def style_stoch_rsi(row_subset): 
-                    k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"; style_k_css = 'color: #adb5bd;'; style_d_css = 'color: #adb5bd;'
-                    k_val_num = row_subset.get(k_col, np.nan); d_val_num = row_subset.get(d_col, np.nan)
+                    k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
+                    style_k_css = 'color: #adb5bd;'; style_d_css = 'color: #adb5bd;'
+                    
+                    k_val_num = row_subset.get(k_col, np.nan) 
+                    d_val_num = row_subset.get(d_col, np.nan)
+
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
-                        common_style = '';
-                        if k_val_num > SRSI_OB and d_val_num > SRSI_OB: common_style = 'color: #dc3545; font-weight: bold;'
-                        elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: common_style = 'color: #198754; font-weight: bold;'
-                        elif k_val_num > d_val_num: common_style = 'color: #28a745;' 
-                        elif k_val_num < d_val_num: common_style = 'color: #fd7e14;' ; else: common_style = '' 
-                        style_k_css = common_style; style_d_css = common_style
+                        common_style = ''
+                        if k_val_num > SRSI_OB and d_val_num > SRSI_OB:
+                            common_style = 'color: #dc3545; font-weight: bold;'
+                        elif k_val_num < SRSI_OS and d_val_num < SRSI_OS:
+                            common_style = 'color: #198754; font-weight: bold;'
+                        elif k_val_num > d_val_num:
+                            common_style = 'color: #28a745;' 
+                        elif k_val_num < d_val_num:
+                            common_style = 'color: #fd7e14;'
+                        else: 
+                            common_style = '' 
+                        style_k_css = common_style
+                        style_d_css = common_style
+                    
                     output_styles = pd.Series('', index=row_subset.index, dtype=str)
                     if k_col in row_subset.index: output_styles[k_col] = style_k_css
                     if d_col in row_subset.index: output_styles[d_col] = style_d_css
@@ -650,5 +660,5 @@ try:
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1414", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.14 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1415", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.15 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
