@@ -1,4 +1,4 @@
-# Version: v1.4.2 - Password Check Removed, Fix NameError CACHE_CHART_TTL, MA_XLONG Note
+# Version: v1.4.3 - Fix table formatting error, AV rate limit note
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -53,47 +53,17 @@ logger.info(f"Number of coins configured: {NUM_COINS}")
 TRAD_TICKERS_AV = ['SPY', 'QQQ', 'GLD', 'SLV', 'UNG', 'UVXY', 'TQQQ', 'NVDA', 'GOOGL', 'AAPL', 'META', 'TSLA', 'MSFT', 'TSM', 'PLTR', 'COIN', 'MSTR']
 logger.info(f"Traditional tickers configured (Alpha Vantage): {TRAD_TICKERS_AV}")
 VS_CURRENCY = "usd"
-CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400 # CACHE_CHART_TTL removed as charts are removed
+CACHE_TTL, CACHE_HIST_TTL, CACHE_TRAD_TTL = 1800, 3600, 14400
 DAYS_HISTORY_DAILY, DAYS_HISTORY_HOURLY = 365, 7
 RSI_PERIOD, RSI_OB, RSI_OS = 14, 70.0, 30.0
 SRSI_PERIOD, SRSI_K, SRSI_D, SRSI_OB, SRSI_OS = 14, 3, 3, 80.0, 20.0
 MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
-# USER NOTE: MA_XLONG (30) is currently shorter than MA_LONG (50). Verify if this is intended.
-MA_SHORT, MA_MEDIUM, MA_LONG, MA_XLONG = 7, 20, 50, 30
+MA_SHORT, MA_MEDIUM, MA_LONG, MA_XLONG = 7, 20, 50, 30 # User note: MA_XLONG (30) < MA_LONG (50)
 BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info("Finished global configuration.")
 
 # --- FUNCTION DEFINITIONS (General) ---
-# def check_password(): # --- PASSWORD CHECK REMOVED ---
-#     logger.debug("Executing check_password.")
-#     if "password_correct" not in st.session_state: st.session_state.password_correct = False
-#     if not st.session_state.password_correct:
-#         pwd_col, btn_col = st.columns([3, 1])
-#         with pwd_col: password = st.text_input("🔑 Password", type="password", key="password_input_field")
-#         with btn_col: st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True); login_button_pressed = st.button("Login", key="login_button")
-#         should_check = login_button_pressed or (password and password != "")
-#         if not should_check: logger.debug("Waiting for password input or button click."); st.stop()
-#         else:
-#             try:
-#                 correct_password = st.secrets["APP_PASSWORD"]
-#                 if not correct_password:
-#                     raise KeyError
-#             except KeyError:
-#                 logger.error("CRITICAL: 'APP_PASSWORD' not found or is empty in Streamlit secrets (secrets.toml). Application cannot start securely if password check is enabled.")
-#                 st.error("Application Access Error: Password configuration missing. Please contact the administrator.")
-#                 st.stop()
-#             except Exception as e:
-#                 logger.error(f"CRITICAL: Unexpected error accessing 'APP_PASSWORD' from Streamlit secrets: {e}")
-#                 st.error(f"Application Access Error: Password configuration issue ({e}). Please contact the administrator.")
-#                 st.stop()
-#
-#             if password == correct_password:
-#                 logger.info("Password correct."); st.session_state.password_correct = True
-#                 if st.query_params.get("logged_in") != "true": st.query_params["logged_in"] = "true"; st.rerun()
-#             else: logger.warning("Incorrect password entered."); st.warning("Incorrect password."); st.stop()
-#     logger.debug("Password check passed."); return True
-
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
@@ -115,6 +85,14 @@ def get_coingecko_market_data(ids_list, currency):
         if not data: logger.warning("CoinGecko Live API: Empty data received."); st.warning("CoinGecko Live API: Empty data received."); return pd.DataFrame(), timestamp_utc
         df = pd.DataFrame(data);
         if not df.empty: df.set_index('id', inplace=True)
+        # Ensure numeric columns are numeric
+        numeric_cols = ['current_price', 'market_cap_rank', 'total_volume',
+                        'price_change_percentage_1h_in_currency', 'price_change_percentage_24h_in_currency',
+                        'price_change_percentage_7d_in_currency', 'price_change_percentage_30d_in_currency',
+                        'price_change_percentage_1y_in_currency']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         st.session_state["api_warning_shown"] = False; logger.info(f"CoinGecko live data fetched for {len(df)} coins."); return df, timestamp_utc
     except requests.exceptions.HTTPError as http_err:
         status_code = http_err.response.status_code; logger.warning(f"HTTP Error CoinGecko Market API (Status: {status_code}): {http_err}")
@@ -126,6 +104,8 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
+    # USER NOTE: Consider increasing sleep if 429 errors persist for historical data.
+    # Or implement exponential backoff for retries (more complex).
     logger.debug(f"TABLE: Starting historical fetch for {coin_id} ({interval}), 6s delay..."); time.sleep(6.0); logger.debug(f"TABLE: Delay ended for {coin_id} ({interval}), starting API call.")
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval if interval == 'hourly' else 'daily', 'precision': 'full'}
     status_msg = f"Unknown Error ({coin_id}, {interval})"
@@ -135,10 +115,24 @@ def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
         prices_df = pd.DataFrame(data['prices'], columns=['timestamp', 'close']); prices_df['timestamp'] = pd.to_datetime(prices_df['timestamp'], unit='ms', utc=True); prices_df.set_index('timestamp', inplace=True); hist_df = prices_df
         if 'total_volumes' in data and data['total_volumes']:
             volumes_df = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'volume']); volumes_df['timestamp'] = pd.to_datetime(volumes_df['timestamp'], unit='ms', utc=True); volumes_df.set_index('timestamp', inplace=True); hist_df = prices_df.join(volumes_df, how='outer')
-        else: hist_df['volume'] = 0.0
-        hist_df = hist_df.interpolate(method='time').ffill().bfill(); hist_df['high'] = hist_df['close']; hist_df['low'] = hist_df['close']; hist_df['open'] = hist_df['close'].shift(1)
-        if not hist_df.empty: hist_df.loc[hist_df.index[0], 'open'] = hist_df['close'].iloc[0]
-        hist_df = hist_df[~hist_df.index.duplicated(keep='last')].sort_index(); hist_df.dropna(subset=['close'], inplace=True)
+        else: hist_df['volume'] = 0.0 # Ensure volume column exists
+        # Ensure numeric types for OHLCV
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in hist_df.columns:
+                hist_df[col] = pd.to_numeric(hist_df[col], errors='coerce')
+            elif col == 'volume': # If volume was missing and added as 0.0
+                 hist_df[col] = 0.0
+
+
+        hist_df = hist_df.interpolate(method='time').ffill().bfill();
+        # Ensure 'high', 'low', 'open' exist even if only 'close' was present in API (common for daily)
+        if 'high' not in hist_df.columns: hist_df['high'] = hist_df['close']
+        if 'low' not in hist_df.columns: hist_df['low'] = hist_df['close']
+        if 'open' not in hist_df.columns:
+            hist_df['open'] = hist_df['close'].shift(1)
+            if not hist_df.empty: hist_df.loc[hist_df.index[0], 'open'] = hist_df['close'].iloc[0]
+
+        hist_df = hist_df[~hist_df.index.duplicated(keep='last')].sort_index(); hist_df.dropna(subset=['close'], inplace=True) # Drop if close is still NaN after processing
         if hist_df.empty: status_msg = f"Processed Empty ({coin_id}, {interval})"; logger.warning(status_msg); return pd.DataFrame(), status_msg
         status_msg = "Success"; logger.info(f"TABLE: Historical data fetched for {coin_id} ({interval}), {len(hist_df)} rows."); return hist_df, status_msg
     except requests.exceptions.HTTPError as http_err:
@@ -179,6 +173,8 @@ def get_etf_flow(): logger.debug("get_etf_flow called (placeholder)."); return "
 @st.cache_data(ttl=CACHE_TRAD_TTL, show_spinner="Loading traditional market data (Alpha Vantage)...")
 def get_traditional_market_data_av(tickers):
     """Fetches quote data from Alpha Vantage for traditional tickers."""
+    # USER NOTE: Your Alpha Vantage key appears to have a daily limit of 25 requests.
+    # This function tries to stay within 5/min but may hit daily if run multiple times.
     logger.info(f"Attempting Alpha Vantage fetch for {len(tickers)} tickers."); data = {ticker: {'price': np.nan, 'change': np.nan, 'change_percent': 'N/A'} for ticker in tickers}; api_key = None
     try: api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]; logger.info("Alpha Vantage API key read from secrets.")
     except KeyError: logger.error("Secret 'ALPHA_VANTAGE_API_KEY' not defined."); st.error("Configuration Error: Alpha Vantage API key not found in secrets. Traditional market data unavailable."); return data
@@ -208,7 +204,7 @@ def get_traditional_market_data_av(tickers):
 # --- Indicator Calculation Functions (Manual for Table) ---
 def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD) -> float:
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
-    series = series.dropna();
+    series = series.dropna().astype(float) # Ensure numeric
     if len(series) < period + 1: return np.nan
     delta = series.diff(); gain = delta.where(delta > 0, 0.0); loss = -delta.where(delta < 0, 0.0)
     avg_gain = gain.ewm(com=period - 1, min_periods=period).mean(); avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
@@ -221,8 +217,9 @@ def calculate_rsi_manual(series: pd.Series, period: int = RSI_PERIOD) -> float:
 
 def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_period: int = SRSI_PERIOD, k_smooth: int = SRSI_K, d_smooth: int = SRSI_D) -> tuple[float, float]:
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan
-    series = series.dropna();
+    series = series.dropna().astype(float) # Ensure numeric
     if len(series) < rsi_period + stoch_period + max(k_smooth, d_smooth) -1 : return np.nan, np.nan
+    # ... (rest of the function is likely fine if series is numeric)
     delta = series.diff(); gain = delta.where(delta > 0, 0.0); loss = -delta.where(delta < 0, 0.0)
     avg_gain = gain.ewm(com=rsi_period - 1, min_periods=rsi_period).mean(); avg_loss = loss.ewm(com=rsi_period - 1, min_periods=rsi_period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan); rsi_series = (100.0 - (100.0 / (1.0 + rs))).dropna()
@@ -239,8 +236,9 @@ def calculate_stoch_rsi(series: pd.Series, rsi_period: int = RSI_PERIOD, stoch_p
 
 def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL) -> tuple[float, float, float]:
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan
-    series = series.dropna();
+    series = series.dropna().astype(float) # Ensure numeric
     if len(series) < slow + signal - 1: return np.nan, np.nan, np.nan
+    # ... (rest of the function is likely fine if series is numeric)
     ema_fast = series.ewm(span=fast, adjust=False, min_periods=fast).mean(); ema_slow = series.ewm(span=slow, adjust=False, min_periods=slow).mean()
     macd_line = ema_fast - ema_slow; signal_line = macd_line.ewm(span=signal, adjust=False, min_periods=signal).mean()
     histogram = macd_line - signal_line
@@ -250,14 +248,19 @@ def calculate_macd_manual(series: pd.Series, fast: int = MACD_FAST, slow: int = 
 
 def calculate_sma_manual(series: pd.Series, period: int) -> float:
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan
-    series = series.dropna();
+    series = series.dropna().astype(float) # Ensure numeric
     if len(series) < period: return np.nan
     return series.rolling(window=period, min_periods=period).mean().iloc[-1]
 
 def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> float:
     required_cols = ['close', 'volume'];
     if not isinstance(df_slice, pd.DataFrame) or df_slice.empty or not all(col in df_slice.columns for col in required_cols): return np.nan
-    df_valid_slice = df_slice[required_cols].dropna();
+    # Ensure numeric types
+    df_valid_slice = df_slice[required_cols].copy()
+    df_valid_slice['close'] = pd.to_numeric(df_valid_slice['close'], errors='coerce')
+    df_valid_slice['volume'] = pd.to_numeric(df_valid_slice['volume'], errors='coerce')
+    df_valid_slice = df_valid_slice.dropna();
+
     if len(df_valid_slice) < period: return np.nan
     df_period = df_valid_slice.iloc[-period:]
     pv = df_period['close'] * df_period['volume']; total_volume = df_period['volume'].sum()
@@ -267,7 +270,9 @@ def calculate_vwap_manual(df_slice: pd.DataFrame, period: int = VWAP_PERIOD) -> 
 
 def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev: float = BB_STD_DEV) -> tuple[float, float, float, float, float, float]:
     if not isinstance(series, pd.Series) or series.empty or series.isna().all(): return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-    series = series.dropna(); min_len_bb_change = period + 1
+    series = series.dropna().astype(float) # Ensure numeric
+    min_len_bb_change = period + 1
+    # ... (rest of the function is likely fine if series is numeric)
     if len(series) >= period:
         middle_band_series = series.rolling(window=period, min_periods=period).mean(); std_series = series.rolling(window=period, min_periods=period).std()
         middle_band_now = middle_band_series.iloc[-1]; std_now = std_series.iloc[-1]
@@ -296,8 +301,18 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     min_len_vwap_base = VWAP_PERIOD; min_len_vwap_change = VWAP_PERIOD + 1
 
     if not hist_daily_df.empty and 'close' in hist_daily_df.columns:
-        if 'volume' not in hist_daily_df.columns: logger.warning(f"{symbol}: TABLE: 'volume' column missing. VWAP N/A."); hist_daily_df['volume'] = np.nan
-        close_daily = hist_daily_df['close'].dropna(); len_daily = len(close_daily); df_for_vwap = hist_daily_df[['close', 'volume']]
+        # Ensure close is numeric for calculations
+        close_series_numeric = pd.to_numeric(hist_daily_df['close'], errors='coerce')
+        if 'volume' not in hist_daily_df.columns:
+            logger.warning(f"{symbol}: TABLE: 'volume' column missing. VWAP N/A.");
+            df_for_vwap_calc = pd.DataFrame({'close': close_series_numeric, 'volume': np.nan})
+        else:
+            df_for_vwap_calc = pd.DataFrame({
+                'close': close_series_numeric,
+                'volume': pd.to_numeric(hist_daily_df['volume'], errors='coerce')
+            })
+
+        close_daily = close_series_numeric.dropna(); len_daily = len(close_daily)
 
         if len_daily >= min_len_rsi_base: indicators["RSI (1d)"] = calculate_rsi_manual(close_daily, RSI_PERIOD)
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_rsi_base}) for RSI(1d)")
@@ -317,14 +332,16 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
              bb_mid, bb_up, bb_low, bb_pct_b, bb_width, bb_width_chg = calculate_bbands_manual(close_daily, BB_PERIOD, BB_STD_DEV)
              indicators["BB %B"] = bb_pct_b; indicators["BB Width"] = bb_width; indicators["BB Width %Chg"] = bb_width_chg
         else: logger.warning(f"{symbol}: TABLE: Insuff data ({len_daily}/{min_len_bb}) for Bollinger Bands")
-        if len(df_for_vwap) >= min_len_vwap_base:
-            indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
-            if len(df_for_vwap) >= min_len_vwap_change:
-                vwap_today = indicators["VWAP (1d)"]; vwap_yesterday = calculate_vwap_manual(df_for_vwap.iloc[-(VWAP_PERIOD + 1):-1], VWAP_PERIOD)
+
+        if len(df_for_vwap_calc.dropna(subset=['close', 'volume'])) >= min_len_vwap_base:
+            indicators["VWAP (1d)"] = calculate_vwap_manual(df_for_vwap_calc.iloc[-VWAP_PERIOD:], VWAP_PERIOD)
+            if len(df_for_vwap_calc.dropna(subset=['close', 'volume'])) >= min_len_vwap_change:
+                vwap_today = indicators["VWAP (1d)"]; vwap_yesterday = calculate_vwap_manual(df_for_vwap_calc.iloc[-(VWAP_PERIOD + 1):-1], VWAP_PERIOD)
                 if pd.notna(vwap_today) and pd.notna(vwap_yesterday) and vwap_yesterday != 0: indicators["VWAP %"] = ((vwap_today - vwap_yesterday) / vwap_yesterday) * 100
                 else: logger.warning(f"{symbol}: TABLE: Cannot calculate VWAP % Change")
-            else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap)}/{min_len_vwap_change}) for VWAP % Change(1d)")
-        else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap)}/{min_len_vwap_base}) for VWAP(1d)")
+            else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap_calc.dropna(subset=['close', 'volume']))}/{min_len_vwap_change}) for VWAP % Change(1d)")
+        else: logger.warning(f"{symbol}: TABLE: Insuff data ({len(df_for_vwap_calc.dropna(subset=['close', 'volume']))}/{min_len_vwap_base}) for VWAP(1d)")
+
 
         if len_daily > min_len_rsi_base and pd.api.types.is_datetime64_any_dtype(close_daily.index):
             try:
@@ -343,10 +360,18 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
 # --- Signal Functions (Refined v1.1) ---
 def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
     """Generates a signal using more indicators ('GPT' style v1.1)."""
-    required_inputs = [ rsi_1d, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price ]
+    # Ensure all inputs that should be numeric are, or are np.nan
+    try:
+        current_price_num = float(current_price) if pd.notna(current_price) else np.nan
+        # Other variables are usually direct from indicator calculations which should be numeric/nan
+    except (ValueError, TypeError):
+        logger.warning(f"GPT Signal: Could not convert current_price '{current_price}' to float.")
+        return "⚪️ N/A" # Or handle error as appropriate
+
+    required_inputs = [ rsi_1d, macd_hist, ma_short, ma_medium, ma_long, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price_num ]
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     score = 0
-    price_vs_ma7 = current_price > ma_short; price_vs_ma20 = current_price > ma_medium; price_vs_ma50 = current_price > ma_long
+    price_vs_ma7 = current_price_num > ma_short; price_vs_ma20 = current_price_num > ma_medium; price_vs_ma50 = current_price_num > ma_long
     ma7_vs_ma20 = ma_short > ma_medium; ma20_vs_ma50 = ma_medium > ma_long
     if price_vs_ma7 and price_vs_ma20 and price_vs_ma50 and ma7_vs_ma20 and ma20_vs_ma50: score += 3
     elif price_vs_ma7 and ma7_vs_ma20: score += 1.5
@@ -354,7 +379,7 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long,
     if not price_vs_ma7 and not price_vs_ma20 and not price_vs_ma50 and not ma7_vs_ma20 and not ma20_vs_ma50: score -= 3
     elif not price_vs_ma7 and not ma7_vs_ma20: score -= 1.5
     elif not price_vs_ma50: score -= 0.5
-    if current_price > vwap_1d: score += 1
+    if current_price_num > vwap_1d: score += 1
     else: score -= 1
     if macd_hist > 0: score += 1.5
     else: score -= 1.5
@@ -372,8 +397,8 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long,
         elif srsi_k < srsi_d: score -= 0.5
     if bb_pct_b > 100: score -= 0.5
     elif bb_pct_b < 0: score += 0.5
-    if bb_width_chg > 5: score += 0.5
-    elif bb_width_chg < -5: score -= 0.25
+    if bb_width_chg > 5: score += 0.5 # Squeeze breakout potential
+    elif bb_width_chg < -5: score -= 0.25 # Contraction, monitor
     if score >= 6.0: return "⚡️ Strong Buy"
     elif score >= 3.0: return "🟢 Buy"
     elif score <= -6.0: return "🚨 Strong Sell"
@@ -384,12 +409,18 @@ def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short, ma_medium, ma_long,
 
 def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, current_price):
     """Generates alert based on MA20/50 Cross, MACD, RSI, VWAP ('Gemini' style v1.1)."""
-    required_inputs = [ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, current_price];
+    try:
+        current_price_num = float(current_price) if pd.notna(current_price) else np.nan
+    except (ValueError, TypeError):
+        logger.warning(f"Gemini Alert: Could not convert current_price '{current_price}' to float.")
+        return "⚪️ N/A"
+
+    required_inputs = [ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, current_price_num];
     if any(pd.isna(x) for x in required_inputs): return "⚪️ N/A"
     is_ma_cross_bullish = ma_medium > ma_long; is_ma_cross_bearish = ma_medium < ma_long
     is_momentum_positive = macd_hist > 0; is_momentum_negative = macd_hist < 0
-    is_price_confirm_bullish = current_price > ma_medium and current_price > vwap_1d
-    is_price_confirm_bearish = current_price < ma_medium and current_price < vwap_1d
+    is_price_confirm_bullish = current_price_num > ma_medium and current_price_num > vwap_1d
+    is_price_confirm_bearish = current_price_num < ma_medium and current_price_num < vwap_1d
     is_rsi_ok_bullish = rsi_1d < RSI_OB + 5
     is_rsi_ok_bearish = rsi_1d > RSI_OS - 5
     if is_ma_cross_bullish and is_momentum_positive and is_price_confirm_bullish and is_rsi_ok_bullish: return "⚡️ Strong Buy"
@@ -397,13 +428,12 @@ def generate_gemini_alert(ma_medium, ma_long, macd_hist, rsi_1d, vwap_1d, curren
     else: return "🟡 Hold"
 
 # --- Chart Indicator Calculation Functions (Manual) ---
+# ... (These are not directly used for the table, but good to keep robust if re-enabled)
 def calculate_sma_series(series: pd.Series, period: int) -> pd.Series:
-    """Calculates SMA for the entire series."""
     if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float)
     return series.rolling(window=period, min_periods=period).mean()
 
 def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
-    """Calculates RSI for the entire series."""
     if not isinstance(series, pd.Series) or series.empty: return pd.Series(index=series.index, dtype=float)
     series_valid = series.dropna()
     if len(series_valid) < period + 1: return pd.Series(index=series.index, dtype=float)
@@ -413,16 +443,9 @@ def calculate_rsi_series(series: pd.Series, period: int = RSI_PERIOD) -> pd.Seri
     rsi.loc[avg_loss == 0] = 100.0; rsi = rsi.clip(0, 100)
     return rsi.reindex(series.index)
 
-# --- Chart Creation Function (REMOVED for v1.4) ---
-# def create_coin_chart(df, symbol): ...
-
 # --- START OF MAIN APP EXECUTION ---
 logger.info("Starting main UI execution.")
 try:
-    # --- PASSWORD CHECK REMOVED ---
-    # if not check_password(): st.stop()
-    # logger.info("Password check passed.") # No longer needed
-
     # --- Title, Refresh Button, Timestamp ---
     col_title, col_button_placeholder, col_button = st.columns([4, 1, 1])
     with col_title: st.title("📈 Crypto Technical Dashboard Pro")
@@ -434,7 +457,6 @@ try:
             st.cache_data.clear(); st.query_params.clear(); st.rerun()
 
     last_update_placeholder = st.empty()
-    # --- FIX: Removed CACHE_CHART_TTL from caption as it's no longer defined ---
     st.caption(f"Cache TTL: Live ({CACHE_TTL/60:.0f}m), Table History ({CACHE_HIST_TTL/60:.0f}m), Traditional ({CACHE_TRAD_TTL/3600:.0f}h).")
 
     # --- Market Overview Section ---
@@ -492,17 +514,15 @@ try:
         last_update_placeholder.markdown(timestamp_display_str)
     else: logger.warning("Live CoinGecko data timestamp unavailable (last_cg_update_utc is None)."); last_update_placeholder.markdown("*Live CoinGecko data timestamp unavailable.*")
 
-    table_results_df = pd.DataFrame(); # Initialize for safety
-    # --- Check Live Data and Process Table ---
+    table_results_df = pd.DataFrame();
     if market_data_df.empty:
         msg = "Critical Error: Could not load live CoinGecko data. Analysis table cannot be generated."
         if st.session_state.get("api_warning_shown", False): msg = "Technical Analysis table not generated: error loading live data (possible CoinGecko API limit reached)."
         logger.error(msg); st.error(msg)
     else:
-        # --- Process Table ---
         logger.info(f"Live CoinGecko data OK ({len(market_data_df)} rows), starting table processing loop."); results = []; fetch_errors_for_display = []; process_start_time = time.time(); effective_num_coins = len(market_data_df.index)
         if effective_num_coins != NUM_COINS: logger.warning(f"Coin count from API ({effective_num_coins}) != configured ({NUM_COINS}). Processing {effective_num_coins}.")
-        show_fire_icon = (market_data_df['price_change_percentage_1h_in_currency'].dropna() > 0).sum() >= FIRE_ICON_THRESHOLD
+        show_fire_icon = (market_data_df['price_change_percentage_1h_in_currency'].dropna() > 0).sum() >= FIRE_ICON_THRESHOLD if 'price_change_percentage_1h_in_currency' in market_data_df else False
         logger.info(f"Show fire icon condition met: {show_fire_icon}")
 
         spinner_msg = f"Fetching history and calculating table indicators for {effective_num_coins} crypto... (~{(effective_num_coins * 6.0 / 60):.1f} min)"
@@ -519,11 +539,16 @@ try:
                     indicators = {}; gpt_signal = "⚪️ N/A"; gemini_alert = "⚪️ N/A";
                     if status_daily != "Success":
                         fetch_errors_for_display.append(f"{symbol}: Daily History (Table) - {status_daily}");
-                        logger.warning(f"{symbol}: Could not calculate table indicators/signals.")
+                        logger.warning(f"{symbol}: Could not calculate table indicators/signals. Status: {status_daily}")
+                        indicators = compute_all_indicators(symbol, pd.DataFrame()) # Pass empty df to get all NaNs
                     else:
                         indicators = compute_all_indicators(symbol, hist_daily_df_table)
-                        gpt_signal = generate_gpt_signal( indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("BB %B"), indicators.get("BB Width %Chg"), indicators.get("VWAP (1d)"), current_price)
-                        gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price)
+
+                    # Ensure current_price is numeric for signal functions
+                    current_price_numeric = pd.to_numeric(current_price, errors='coerce')
+
+                    gpt_signal = generate_gpt_signal( indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("BB %B"), indicators.get("BB Width %Chg"), indicators.get("VWAP (1d)"), current_price_numeric)
+                    gemini_alert = generate_gemini_alert( indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price_numeric)
 
                     coingecko_link = f"https://www.coingecko.com/en/coins/{coin_id}";
                     results.append({ "Rank": rank, "Symbol": symbol, "Name": name, "MA/MACD Cross Alert": gemini_alert, "Composite Score": gpt_signal, f"Price ({VS_CURRENCY.upper()})": current_price, "% 1h": change_1h, "% 24h": change_24h, "% 7d": change_7d, "% 30d": change_30d, "% 1y": change_1y, "RSI (1d)": indicators.get("RSI (1d)"), "RSI (1w)": indicators.get("RSI (1w)"), "RSI (1mo)": indicators.get("RSI (1mo)"), "SRSI %K (1d)": indicators.get("SRSI %K (1d)"), "SRSI %D (1d)": indicators.get("SRSI %D (1d)"), "MACD Hist (1d)": indicators.get("MACD Hist (1d)"), f"MA({MA_SHORT}d)": indicators.get(f"MA({MA_SHORT}d)"), f"MA({MA_MEDIUM}d)": indicators.get(f"MA({MA_MEDIUM}d)"), f"MA({MA_XLONG}d)": indicators.get(f"MA({MA_XLONG}d)"), f"MA({MA_LONG}d)": indicators.get(f"MA({MA_LONG}d)"), "BB %B": indicators.get("BB %B"), "BB Width": indicators.get("BB Width"), "BB Width %Chg": indicators.get("BB Width %Chg"), "VWAP (1d)": indicators.get("VWAP (1d)"), "VWAP %": indicators.get("VWAP %"), f"Volume 24h ({VS_CURRENCY.upper()})": volume_24h, "Link": coingecko_link })
@@ -531,11 +556,18 @@ try:
                 except Exception as coin_err: err_msg = f"Critical error processing table for {symbol} ({coin_id}): {coin_err}"; logger.exception(err_msg); fetch_errors_for_display.append(f"{symbol}: Critical Table Error - See Log")
         process_end_time = time.time(); total_time = process_end_time - process_start_time; logger.info(f"Finished crypto table loop. Processed {actual_processed_count}/{effective_num_coins} coins. Time: {total_time:.1f} sec"); st.sidebar.info(f"Table Processing Time: {total_time:.1f} sec")
 
-        # --- Display Table ---
+        if fetch_errors_for_display:
+            st.sidebar.error("Data Fetch/Processing Issues:")
+            for err_item in fetch_errors_for_display: st.sidebar.caption(f"- {err_item}")
+
         if results:
             logger.info(f"Creating final table DataFrame with {len(results)} results.");
             try:
-                table_results_df = pd.DataFrame(results); table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce'); table_results_df.set_index('Rank', inplace=True, drop=True); table_results_df.sort_index(inplace=True)
+                table_results_df = pd.DataFrame(results);
+                table_results_df['Rank'] = pd.to_numeric(table_results_df['Rank'], errors='coerce');
+                table_results_df.set_index('Rank', inplace=True, drop=True);
+                table_results_df.sort_index(inplace=True)
+
                 cols_order = [
                     "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score",
                     f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y",
@@ -550,6 +582,20 @@ try:
                 cols_to_show = [col for col in cols_order if col in table_results_df.columns];
                 df_display = table_results_df[cols_to_show].copy()
 
+                # --- FIX: Convert all potentially numeric columns to numeric before styling/formatting ---
+                cols_to_format_as_numeric = [
+                    f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y",
+                    "RSI (1d)", "RSI (1w)", "RSI (1mo)", "SRSI %K (1d)", "SRSI %D (1d)",
+                    "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)",
+                    f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width",
+                    "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"
+                ]
+                for col in cols_to_format_as_numeric:
+                    if col in df_display.columns:
+                        df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
+                # --- END FIX ---
+
+
                 # --- Styling Functions (Return CSS Strings Only) ---
                 def highlight_signal_style(val):
                     style = 'color: #6c757d; font-weight: normal;';
@@ -559,56 +605,53 @@ try:
                         elif "Strong Sell" in val: style = 'color: #dc3545; font-weight: bold;'
                         elif "Sell" in val and "Strong" not in val: style = 'color: #fd7e14;'
                         elif "CTB" in val: style = 'color: #20c997;'
-                        elif "CTS" in val: style = 'color: #ffc107; color: #000;' # Ensure text is visible on yellow
+                        elif "CTS" in val: style = 'color: #ffc107; color: #000;'
                         elif "Hold" in val: style = 'color: #6c757d;'
                         elif "N/A" in val or "N/D" in val : style = 'color: #adb5bd;'
-                    elif pd.isna(val): style = 'color: #adb5bd;'
+                    elif pd.isna(val): style = 'color: #adb5bd;' # Should be handled by na_rep but good fallback
                     return style
 
-                def highlight_pct_col_style(val):
-                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                def highlight_pct_col_style(val): # Applied to already numeric or NaN columns
+                    if pd.isna(val): return 'color: #adb5bd;' # Style NaNs consistently
+                    if not isinstance(val, (int, float)): return '' # Should not happen after to_numeric
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
 
-                def style_rsi(val):
-                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                def style_rsi(val): # Applied to already numeric or NaN columns
+                    if pd.isna(val): return 'color: #adb5bd;'
+                    if not isinstance(val, (int, float)): return ''
                     if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
                     elif val < RSI_OS: return 'color: #198754; font-weight: bold;'
                     else: return ''
 
-                def style_macd_hist(val):
-                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                def style_macd_hist(val): # Applied to already numeric or NaN columns
+                    if pd.isna(val): return 'color: #adb5bd;'
+                    if not isinstance(val, (int, float)): return ''
                     if val > 0: return 'color: green;'
                     elif val < 0: return 'color: red;'
                     else: return ''
 
-                def style_stoch_rsi(row_subset):
+                def style_stoch_rsi(row_subset): # row_subset here contains numeric or NaN values
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"
                     default_style = ''; style_k_css = default_style; style_d_css = default_style
-                    original_row_index = row_subset.name # This is the index of the row in df_display
                     
-                    if original_row_index not in table_results_df.index:
-                         logger.warning(f"SRSI Style: Index {original_row_index} not found in table_results_df. SRSI style skipped for this row.")
-                         return pd.Series([default_style, default_style], index=row_subset.index)
-
-                    k_val_num = table_results_df.loc[original_row_index, k_col] if k_col in table_results_df.columns else np.nan
-                    d_val_num = table_results_df.loc[original_row_index, d_col] if d_col in table_results_df.columns else np.nan
+                    k_val_num = row_subset[k_col] if k_col in row_subset else np.nan
+                    d_val_num = row_subset[d_col] if d_col in row_subset else np.nan
 
                     if pd.notna(k_val_num) and pd.notna(d_val_num):
                         if k_val_num > SRSI_OB and d_val_num > SRSI_OB: style_str = 'color: #dc3545; font-weight: bold;'
                         elif k_val_num < SRSI_OS and d_val_num < SRSI_OS: style_str = 'color: #198754; font-weight: bold;'
                         elif k_val_num > d_val_num: style_str = 'color: #28a745;'
                         elif k_val_num < d_val_num: style_str = 'color: #fd7e14;'
-                        else: style_str = default_style
+                        else: style_str = default_style # Both equal or some other case
                         style_k_css = style_str; style_d_css = style_str
-                    elif pd.isna(k_val_num) and pd.isna(d_val_num):
-                        style_k_css = 'color: #adb5bd;'
-                        style_d_css = 'color: #adb5bd;'
+                    elif pd.isna(k_val_num) or pd.isna(d_val_num): # If one or both are NaN
+                        style_k_css = 'color: #adb5bd;' if pd.isna(k_val_num) else ''
+                        style_d_css = 'color: #adb5bd;' if pd.isna(d_val_num) else ''
                     
                     output_styles = pd.Series('', index=row_subset.index, dtype=str)
                     if k_col in row_subset.index: output_styles[k_col] = style_k_css
                     if d_col in row_subset.index: output_styles[d_col] = style_d_css
                     return output_styles
-
                 # --- Define Formatters ---
                 formatters = {}
                 currency_col = f"Price ({VS_CURRENCY.upper()})"; volume_col = f"Volume 24h ({VS_CURRENCY.upper()})"
@@ -619,22 +662,22 @@ try:
                 ma_vwap_cols = [c for c in df_display.columns if ("MA" in c or "VWAP" in c) and "%" not in c]
 
                 if currency_col in df_display.columns: formatters[currency_col] = "${:,.4f}"
-                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x)
+                if volume_col in df_display.columns: formatters[volume_col] = lambda x: format_large_number(x) if pd.notna(x) else "N/A" # Handle NaN for volume
                 for col in pct_cols_all:
                     if col in df_display.columns and col != '% 1h': formatters[col] = "{:+.2f}%"
-                def format_1h_with_icon(val):
+                def format_1h_with_icon(val): # val is now numeric or NaN
                     if pd.isna(val): return "N/A"
                     icon = "🔥 " if show_fire_icon and val > 0 else ""
                     return f"{icon}{val:+.2f}%"
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
+
                 for col in rsi_cols_list + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = "{:.1f}"
                 if macd_hist_col[0] in df_display.columns: formatters[macd_hist_col[0]] = "{:+.4f}"
                 for col in ma_vwap_cols:
                      if col in df_display.columns: formatters[col] = "{:,.2f}"
 
-                # --- Apply Styles THEN Formatting ---
-                styled_table = df_display.style
+                styled_table = df_display.style # Start with the numeric-coerced df_display
 
                 cols_for_pct_style = [col for col in pct_cols_all if col in df_display.columns];
                 if cols_for_pct_style: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style)
@@ -646,18 +689,16 @@ try:
                 rsi_cols_to_style = [col for col in rsi_cols_list if col in df_display.columns]
                 if rsi_cols_to_style: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style)
 
-                if macd_hist_col[0] in df_display.columns and macd_hist_col[0] in df_display:
-                     styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col)
+                if macd_hist_col[0] in df_display.columns: # macd_hist_col[0] is a string name
+                     styled_table = styled_table.map(style_macd_hist, subset=macd_hist_col) # subset expects list of col names
 
                 srsi_cols_exist = all(col in df_display.columns for col in srsi_value_cols)
                 if srsi_cols_exist:
                      logger.debug("Applying SRSI row-wise styling.")
                      styled_table = styled_table.apply(style_stoch_rsi, axis=1, subset=srsi_value_cols)
 
-                # Apply formatting LAST
                 styled_table = styled_table.format(formatters, na_rep="N/A")
 
-                # --- Display Table ---
                 logger.info("Displaying styled table DataFrame.");
                 st.dataframe(styled_table, use_container_width=True,
                              column_config={
@@ -670,8 +711,6 @@ try:
         else: logger.warning("No valid table results to display."); st.warning("No valid crypto results to display in the table.")
 
     # --- Chart Section (REMOVED in v1.4) ---
-    # ... (Chart code remains commented out as per v1.4)
-
 
     # --- Legend (Improved v1.1) ---
     st.divider();
@@ -689,6 +728,7 @@ try:
         *   **RSI (1d, 1w, 1mo):** Relative Strength Index (0-100).
             *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought.
             *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold.
+            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
         *   **SRSI %K / %D (1d):** Stochastic RSI (0-100).
             *   <span style="color:#198754; font-weight:bold;">Values (Bold Green)</span>: Oversold (K&D < 20).
             *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Overbought (K&D > 80).
@@ -698,13 +738,14 @@ try:
         *   **MACD Hist (1d):** MACD Histogram.
             *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
             *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
-        *   **MA(7d/20d/30d/50d):** Simple Moving Averages. Trend lines. *Values not colored.*
+            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
+        *   **MA(7d/20d/30d/50d):** Simple Moving Averages. Trend lines. *Values not colored, N/A if insufficient data.*
         *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev). Measure volatility and price relative to range.
-            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
-            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value.
-            *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening.
-        *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored.*
-        *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing.
+            *   **%B (%):** Price position relative to bands (%). >100 = Above Upper; <0 = Below Lower. <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value. <span style="color:#adb5bd;">N/A</span> if calc fails.
+            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/% <span style="color:green;">Green</span> color indicates value. <span style="color:#adb5bd;">N/A</span> if calc fails.
+            *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening. <span style="color:#adb5bd;">N/A</span> if calc fails.
+        *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored, N/A if insufficient data.*
+        *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing. <span style="color:#adb5bd;">N/A</span> if calc fails.
         *   **Volume 24h:** Trading volume ($) (CoinGecko).
         *   **Link:** CoinGecko page link.
         *   **N/A:** Data Not Available.
@@ -718,8 +759,8 @@ try:
         *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
 
         **Important Notes:**
-        *   Table data fetch is slowed (6s/coin). Initial load takes time.
-        *   Traditional Market data has **4h cache**.
+        *   Table data fetch is slowed (6s/coin). Initial load takes time. **CoinGecko rate limits may still occur.**
+        *   Traditional Market data has **4h cache**. Alpha Vantage free tier has daily limits (e.g., 25 calls/day).
         *   **DYOR (Do Your Own Research).**
         """, unsafe_allow_html=True)
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
