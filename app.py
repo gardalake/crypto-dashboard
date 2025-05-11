@@ -1,4 +1,4 @@
-# Version: v1.4.15 - Fix SyntaxError in style_stoch_rsi
+# Version: v1.4.15 - Updated Legend Content, Syntax/Indent Fixes
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -98,7 +98,7 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0)
+    func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0) # Consider increasing if 429s are frequent
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval, 'precision': 'full'}; status_msg = "Unknown Error"
     try:
         logger.debug(f"{func_tag} Requesting URL: {url} with params: {params}"); response = requests.get(url, params=params, timeout=25); response.raise_for_status(); data = response.json()
@@ -276,7 +276,7 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     func_tag = f"[COMPUTE_ALL({symbol})]"
-    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan } # RSI (1mo) removed
+    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
     if hist_daily_df.empty or 'close' not in hist_daily_df.columns: logger.warning(f"{func_tag}[DATA_WARN] Empty/invalid daily historical data. Cannot compute indicators."); return indicators
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Input hist_daily_df shape: {hist_daily_df.shape}. Head:\n{hist_daily_df.head(2).to_string()}")
     close_series_numeric = pd.to_numeric(hist_daily_df['close'], errors='coerce')
@@ -377,7 +377,7 @@ try:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") 
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1413"): 
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1415"): 
             logger.info("[UI_ACTION] Refresh button clicked.")
             if 'api_warning_shown' in st.session_state:
                 del st.session_state['api_warning_shown']
@@ -608,54 +608,160 @@ try:
         else: st.warning("No valid crypto results to display in the table (all fetches might have failed).")
 
     st.divider();
-    with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False): 
+    with st.expander("📘 Indicator, Signal & Legend Guide (v1.2)", expanded=False):
         st.markdown("""
-        *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
+        *Disclaimer: This dashboard is provided for informational and educational purposes only. All information, including signals, is experimental and **DOES NOT CONSTITUTE FINANCIAL OR TRADING ADVICE.** Past performance is not indicative of future results. Always Do Your Own Research (DYOR) and consult with a qualified financial advisor before making any investment decisions.*
 
-        **Market Overview:** (See above section for details)
+        ---
+        **Market Overview:**
+        *   **Fear & Greed Index:** (Source: Alternative.me) A sentiment indicator that measures market emotion. Extreme fear can be a sign that investors are too worried (potential buying opportunity), while extreme greed can indicate the market is due for a correction (potential selling opportunity). Ranges from 0 (Extreme Fear) to 100 (Extreme Greed).
+        *   **Total Crypto M.Cap:** (Source: CoinGecko) The total market capitalization of all cryptocurrencies, in the selected currency (USD). Indicates the overall size and health of the crypto market.
+        *   **Crypto ETFs Flow (Daily):** (Currently N/A) Placeholder for data on daily fund flows into and out of cryptocurrency Exchange Traded Funds. Positive flow generally indicates bullish sentiment and institutional interest.
+        *   **S&P 500 (SPY) / Nasdaq (QQQ) / Gold (GLD) / etc.:** Price data for traditional market assets and ETFs. These can provide context for the broader financial markets, as crypto markets are often correlated (or inversely correlated) with them.
 
+        ---
         **Crypto Technical Analysis Table:**
-        *   **Rank:** Market cap rank (CoinGecko).
-        *   **MA/MACD Cross Alert / Composite Score:** **Experimental** signals. **NOT trading advice.** (See colors below).
-        *   **Price:** Current price ($) (CoinGecko).
-        *   **% 1h...1y:** Price changes. <span style="color:red;">Red</span>=Negative, <span style="color:green;">Green</span>=Positive. 🔥 Icon on % 1h indicates market breadth (>=8 coins positive).
-        *   **RSI (1d, 1w):** Relative Strength Index (0-100).
-            *   <span style="color:#dc3545; font-weight:bold;">Value > 70</span>: Overbought.
-            *   <span style="color:#198754; font-weight:bold;">Value < 30</span>: Oversold.
-            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
-        *   **SRSI %K / %D (1d):** Stochastic RSI (0-100).
-            *   <span style="color:#198754; font-weight:bold;">Values (Bold Green)</span>: Oversold (K&D < 20).
-            *   <span style="color:#dc3545; font-weight:bold;">Values (Bold Red)</span>: Overbought (K&D > 80).
-            *   <span style="color:#28a745;">Values (Green)</span>: Bullish Crossover (K > D).
-            *   <span style="color:#fd7e14;">Values (Orange)</span>: Bearish Crossover (K < D).
-            *   <span style="color:#adb5bd;">Values (Light Grey)</span>: N/A.
-        *   **MACD Hist (1d):** MACD Histogram.
-            *   <span style="color:green;">Value > 0 (Green)</span>: Bullish momentum.
-            *   <span style="color:red;">Value < 0 (Red)</span>: Bearish momentum.
-            *   <span style="color:#adb5bd;">Value (Light Grey)</span>: N/A.
-        *   **MA(7d/20d/30d/50d):** Simple Moving Averages. *Values not colored, N/A if insufficient data.*
-        *   **BB %B / Width / Width %Chg:** Bollinger Bands (20d, 2 std dev).
-            *   **%B (%):** Price position relative to bands (%). <span style="color:red;">Red</span>/<span style="color:green;">Green</span>. <span style="color:#adb5bd;">N/A</span> if calc fails.
-            *   **Width (%):** Tightness of bands (%). <span style="color:red;">Red</span>/<span style="color:green;">Green</span>. <span style="color:#adb5bd;">N/A</span> if calc fails.
-            *   **Width %Chg (%):** Daily % change in Band Width. <span style="color:red;">Red</span>=Narrowing, <span style="color:green;">Green</span>=Widening. <span style="color:#adb5bd;">N/A</span> if calc fails.
-        *   **VWAP (1d):** Volume Weighted Average Price. *Value not colored, N/A if insufficient data.*
-        *   **VWAP %:** Daily % change of VWAP. <span style="color:red;">Red</span>=Decreasing, <span style="color:green;">Green</span>=Increasing. <span style="color:#adb5bd;">N/A</span> if calc fails.
-        *   **Volume 24h:** Trading volume ($) (CoinGecko).
-        *   **Link:** CoinGecko page link.
-        *   **N/A:** Data Not Available (typically due to API errors or insufficient history).
 
-        **Signal Column Colors & Meanings:**
+        *   **Rank:** Market capitalization rank as provided by CoinGecko. Lower numbers mean larger market cap.
+        *   **Price:** Current price in the selected currency (USD), sourced from CoinGecko.
+
+        *   **% 1h, % 24h, % 7d, % 30d, % 1y:** Percentage price change over the respective time periods.
+            *   <span style="color:red;">Red</span> = Negative change.
+            *   <span style="color:green;">Green</span> = Positive change.
+            *   🔥 Icon on **% 1h** indicates a potentially "hot" market or broad positive momentum if a significant number of monitored assets (currently >=8) show positive 1-hour change.
+
+        ---
+        **Key Technical Indicators Explained:**
+
+        *   **RSI (1d, 1w) - Relative Strength Index:**
+            *   **What it is:** A momentum oscillator that measures the speed and change of price movements. It oscillates between 0 and 100.
+            *   **How it's used:**
+                *   Traditionally, RSI is considered **overbought** when above 70 (<span style="color:#dc3545; font-weight:bold;">Bold Red</span>) and **oversold** when below 30 (<span style="color:#198754; font-weight:bold;">Bold Green</span>).
+                *   Overbought suggests the price may have risen too much too quickly and could be due for a pullback.
+                *   Oversold suggests the price may have fallen too much too quickly and could be due for a rebound.
+                *   **Divergence:** Bullish divergence occurs when price makes a new low but RSI makes a higher low (potential uptrend). Bearish divergence occurs when price makes a new high but RSI makes a lower high (potential downtrend). *This dashboard does not automatically detect divergences.*
+            *   *(1d = Daily data, 1w = Weekly data)*
+
+        *   **SRSI %K / %D (1d) - Stochastic RSI:**
+            *   **What it is:** An oscillator that applies the Stochastic oscillator formula to a set of RSI values, rather than to price data. It measures the RSI's level relative to its own high-low range over a set period. It's more sensitive than RSI and generates more frequent signals. Values range from 0 to 100.
+            *   **%K Line:** The main SRSI line.
+            *   **%D Line:** A moving average of the %K line (signal line).
+            *   **How it's used:**
+                *   **Overbought/Oversold:** Similar to RSI, values above 80 (<span style="color:#dc3545; font-weight:bold;">Bold Red</span>) are considered overbought, and values below 20 (<span style="color:#198754; font-weight:bold;">Bold Green</span>) are considered oversold. These signals are often more frequent and potentially less reliable than RSI's 70/30 levels.
+                *   **Crossovers:**
+                    *   When %K crosses above %D (<span style="color:#28a745;">Green Text</span>), it can be a bullish signal.
+                    *   When %K crosses below %D (<span style="color:#fd7e14;">Orange Text</span>), it can be a bearish signal.
+                *   More sensitive to short-term movements than standard RSI.
+
+        *   **MACD Hist (1d) - Moving Average Convergence Divergence Histogram:**
+            *   **What it is:** A trend-following momentum indicator that shows the relationship between two Exponential Moving Averages (EMAs) of an asset's price.
+                *   **MACD Line:** Typically the 12-period EMA minus the 26-period EMA.
+                *   **Signal Line:** Typically a 9-period EMA of the MACD Line.
+                *   **Histogram:** The difference between the MACD Line and the Signal Line. This is what's displayed in the table.
+            *   **How it's used (Histogram):**
+                *   **Positive Histogram (<span style="color:green;">Green Text</span>):** Indicates the MACD Line is above the Signal Line. This is generally bullish, suggesting increasing upside momentum. The larger the positive value, the stronger the bullish momentum.
+                *   **Negative Histogram (<span style="color:red;">Red Text</span>):** Indicates the MACD Line is below the Signal Line. This is generally bearish, suggesting increasing downside momentum. The larger the negative value (further from zero), the stronger the bearish momentum.
+                *   **Zero Line Crossovers:** When the histogram crosses above zero, it can be a buy signal. When it crosses below zero, it can be a sell signal.
+                *   **Divergence:** Similar to RSI, divergence between the histogram and price can signal potential trend reversals. *This dashboard does not automatically detect divergences.*
+
+        *   **MA(7d/20d/30d/50d) - Simple Moving Averages:**
+            *   **What it is:** The average price of an asset over a specified number of periods (days in this case). MAs smooth out price data to help identify trend direction.
+            *   **How it's used:**
+                *   **Trend Identification:** If price is above a MA, it can indicate an uptrend for that MA's timeframe. If below, a downtrend.
+                *   **Support/Resistance:** Longer-term MAs (e.g., 50d, 200d - though 200d isn't shown) can act as dynamic support or resistance levels.
+                *   **Crossovers:** When a shorter-term MA (e.g., MA(20d)) crosses above a longer-term MA (e.g., MA(50d)), it's often considered a bullish signal (a "Golden Cross" if it's 50d crossing above 200d). The reverse is a bearish signal ("Death Cross"). *This table shows the MA values, not direct crossover alerts.*
+
+        *   **BB %B / Width / Width %Chg - Bollinger Bands (20-day, 2 Standard Deviations):**
+            *   **What it is:** Bands plotted two standard deviations (positively and negatively) away from a simple moving average (typically 20-period SMA). They measure market volatility and provide a relative definition of high and low prices.
+            *   **BB %B (%):** ("Percent B") Shows where the current price is in relation to the bands.
+                *   `> 100%`: Price is above the upper band.
+                *   `< 0%`: Price is below the lower band.
+                *   `~50%`: Price is near the middle band (SMA).
+                *   Color reflects if %B is positive (closer to upper band or above) or negative (closer to lower band or below), not strictly a buy/sell.
+            *   **BB Width (%):** The difference between the upper and lower bands, divided by the middle band, expressed as a percentage. Measures the "tightness" or volatility.
+                *   Low width indicates low volatility (a "squeeze"), often preceding a significant price move (breakout).
+                *   High width indicates high volatility.
+                *   Color reflects if the width value itself is positive (always is) or negative (never is, so it's just for consistency).
+            *   **BB Width %Chg (%):** The percentage change in Bollinger Bandwidth from the previous day to the current day.
+                *   <span style="color:green;">Green</span>: Bands are widening (volatility increasing).
+                *   <span style="color:red;">Red</span>: Bands are narrowing (volatility decreasing, "squeeze" might be forming).
+
+        *   **VWAP (1d) - Volume Weighted Average Price (Daily):**
+            *   **What it is:** The average price of an asset over a specific period (here, 14 days using daily data), weighted by trading volume during that period. Gives more significance to price levels where more volume was traded.
+            *   **How it's used:**
+                *   Often used by intraday traders as a benchmark. Price above VWAP can be seen as bullish for the period, below as bearish.
+                *   Can act as dynamic support/resistance.
+        *   **VWAP %:** The percentage change in the 14-day VWAP from the previous day's 14-day VWAP to the current day's 14-day VWAP.
+            *   <span style="color:green;">Green</span>: VWAP is increasing (potentially bullish underlying trend).
+            *   <span style="color:red;">Red</span>: VWAP is decreasing (potentially bearish underlying trend).
+
+        *   **Volume 24h:** Total trading volume for the asset in the last 24 hours, in the selected currency (USD). High volume can confirm the strength of a price move.
+
+        ---
+        **Experimental Signals Explained:**
+
+        *These signals are generated by combining multiple indicators based on common technical analysis strategies. They are **highly experimental** and should be treated with extreme caution. They are intended for educational insight into how such signals *could* be constructed, not as reliable predictors.*
+
+        1.  **"MA/MACD Cross Alert" (Gemini Style Signal):**
+            *   **Objective:** To identify potentially strong trend continuations based on alignment of moving averages, MACD momentum, and price confirmation relative to VWAP.
+            *   **Logic for "⚡️ Strong Buy":**
+                1.  **Bullish MA Cross:** The MA(20d) is above the MA(50d) (medium-term trend is up relative to longer-term).
+                2.  **Positive Momentum:** The MACD Histogram (1d) is positive (MACD line is above its signal line, indicating bullish momentum).
+                3.  **Price Confirmation (Bullish):** The current price is above both the MA(20d) *and* the VWAP(1d) (price is confirming the bullish trend and holding above a key volume-weighted level).
+                4.  **RSI Confirmation (Not Overheated):** The RSI(1d) is not excessively overbought (specifically, below 75, which is RSI_OB + 5) to avoid buying at extreme peaks.
+            *   **Logic for "🚨 Strong Sell":**
+                1.  **Bearish MA Cross:** The MA(20d) is below the MA(50d).
+                2.  **Negative Momentum:** The MACD Histogram (1d) is negative.
+                3.  **Price Confirmation (Bearish):** Current price is below both MA(20d) *and* VWAP(1d).
+                4.  **RSI Confirmation (Not Oversold):** The RSI(1d) is not excessively oversold (specifically, above 25, which is RSI_OS - 5).
+            *   **If conditions aren't met for Strong Buy/Sell:** Returns "🟡 Hold".
+            *   **Why it *might* be helpful for prediction (theoretical):** This signal attempts to catch established trends confirmed by multiple factors. The MA cross indicates trend direction, MACD confirms momentum in that direction, price relative to MAs/VWAP confirms the current price action supports the trend, and RSI tries to filter out entries at extreme exhaustion points. It's a confluence-based signal.
+
+        2.  **"Composite Score" (GPT Style Signal):**
+            *   **Objective:** To provide a more nuanced score based on a wider array of weighted conditions from MAs, MACD, RSI, StochRSI, Bollinger Bands, and VWAP.
+            *   **Logic:** It assigns positive or negative points based on various conditions:
+                *   **Moving Averages (Score ±0.5 to ±3):**
+                    *   Strong bullish alignment (Price > MA7 > MA20 > MA50) gets +3.
+                    *   Strong bearish alignment gets -3.
+                    *   Partial bullish/bearish alignments get smaller scores.
+                *   **VWAP (Score ±1):** Price above VWAP(1d) is +1, below is -1.
+                *   **MACD Histogram (Score ±1.5):** Positive histogram is +1.5, negative is -1.5.
+                *   **RSI (1d) (Score ±0.5 to ±1.5):**
+                    *   Oversold (<30) gets +1.5. Near oversold (<40) gets +0.5.
+                    *   Overbought (>70) gets -1.5. Near overbought (>60) gets -0.5.
+                *   **RSI (1w) (Score ±0.5):** Similar logic for weekly RSI (<40 or >60) for longer-term context.
+                *   **Stochastic RSI (1d) (Score ±0.5 to ±1):**
+                    *   Both %K and %D oversold (<20) gets +1.
+                    *   Both %K and %D overbought (>80) gets -1.
+                    *   Bullish crossover (%K > %D) gets +0.5. Bearish crossover gets -0.5.
+                *   **Bollinger Bands (Score ±0.25 to ±0.5):**
+                    *   Price below lower band (%B < 0) gets +0.5. Price above upper band (%B > 100) gets -0.5.
+                    *   Bandwidth significantly expanding (BB Width %Chg > 5%) gets +0.5 (potential breakout).
+                    *   Bandwidth significantly contracting (BB Width %Chg < -5%) gets -0.25 (potential squeeze, but also uncertainty).
+            *   **Score Thresholds for Signals:**
+                *   `>= 6.0`: "⚡️ Strong Buy"
+                *   `>= 3.0`: "🟢 Buy"
+                *   `<= -6.0`: "🚨 Strong Sell"
+                *   `<= -3.0`: "🔴 Sell"
+                *   `> 0`: "⏳ CTB" (Consider To Buy - mildly bullish)
+                *   `< 0`: "⚠️ CTS" (Consider To Sell - mildly bearish)
+                *   `0`: "🟡 Hold"
+            *   **Why it *might* be helpful for prediction (theoretical):** This signal aggregates evidence from many different types of indicators (trend, momentum, volatility, overbought/oversold conditions). A high positive score suggests a confluence of bullish factors across multiple dimensions of technical analysis. A high negative score suggests the opposite. It's an attempt to quantify overall technical health/weakness. The "CTB" and "CTS" signals provide a more granular view for conditions that are leaning one way but aren't yet strongly confirmed by the majority of factors.
+
+        ---
+        **Signal Column Colors & Meanings (Recap):**
         *   <span style="color:#198754; font-weight:bold;">⚡️ Strong Buy</span> / <span style="color:#28a745;">🟢 Buy</span>: Bullish.
         *   <span style="color:#dc3545; font-weight:bold;">🚨 Strong Sell</span> / <span style="color:#fd7e14;">🔴 Sell</span>: Bearish.
         *   <span style="color:#20c997;">⏳ CTB</span>: Monitor (Buy).
         *   <span style="color:#ffc107; color:#000;">⚠️ CTS</span>: Monitor (Sell).
         *   <span style="color:#6c757d;">🟡 Hold</span>: Neutral.
-        *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed.
+        *   <span style="color:#adb5bd;">⚪️ N/A</span>: Calculation failed (often due to insufficient data for indicators).
 
+        ---
         **Important Notes:**
-        *   Table data fetch includes a 6s delay per coin. API rate limits may still cause data gaps (shown as N/A).
-        *   Traditional Market data has a **4h cache**. Alpha Vantage free tier has daily limits.
-        *   **DYOR (Do Your Own Research).**
+        *   Table data fetch includes a 6s delay per coin for historical data. API rate limits (especially from CoinGecko) may still occur, leading to "N/A" for some indicators.
+        *   Traditional Market data has a **4h cache**. Alpha Vantage free tier has daily API call limits (e.g., 25 calls/day).
+        *   **This dashboard is a tool for learning and observation, NOT a financial advisor. DYOR.**
         """, unsafe_allow_html=True) 
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
