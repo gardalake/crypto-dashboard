@@ -1,4 +1,4 @@
-# Version: v1.4.14 - Remove RSI (1mo), Verify Signal Col Formatting, General Check
+# Version: v1.4.14 - Fix SyntaxErrors in styling functions, Remove RSI (1mo)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # --- END: Logging Configuration ---
 
-IS_DEBUG_MODE = False 
+IS_DEBUG_MODE = False
 if IS_DEBUG_MODE: logger.setLevel(logging.DEBUG)
 else: logger.setLevel(logging.INFO)
 logger.info(f"Logging configured for UI (v1.4.14 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}).")
@@ -276,8 +276,7 @@ def calculate_bbands_manual(series: pd.Series, period: int = BB_PERIOD, std_dev:
 
 def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
     func_tag = f"[COMPUTE_ALL({symbol})]"
-    # --- MODIFICATION: Removed RSI (1mo) ---
-    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan }
+    indicators = { "RSI (1d)": np.nan, "RSI (1w)": np.nan, "SRSI %K (1d)": np.nan, "SRSI %D (1d)": np.nan, "MACD Line (1d)": np.nan, "MACD Signal (1d)": np.nan, "MACD Hist (1d)": np.nan, f"MA({MA_SHORT}d)": np.nan, f"MA({MA_MEDIUM}d)": np.nan, f"MA({MA_LONG}d)": np.nan, f"MA({MA_XLONG}d)": np.nan, "BB %B": np.nan, "BB Width": np.nan, "BB Width %Chg": np.nan, "VWAP (1d)": np.nan, "VWAP %": np.nan } # RSI (1mo) removed
     if hist_daily_df.empty or 'close' not in hist_daily_df.columns: logger.warning(f"{func_tag}[DATA_WARN] Empty/invalid daily historical data. Cannot compute indicators."); return indicators
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Input hist_daily_df shape: {hist_daily_df.shape}. Head:\n{hist_daily_df.head(2).to_string()}")
     close_series_numeric = pd.to_numeric(hist_daily_df['close'], errors='coerce')
@@ -311,16 +310,10 @@ def compute_all_indicators(symbol: str, hist_daily_df: pd.DataFrame) -> dict:
             if len(df_weekly) >= RSI_PERIOD + 1: indicators["RSI (1w)"] = calculate_rsi_manual(df_weekly, RSI_PERIOD, symbol=f"{symbol}-1W")
             else: logger.debug(f"{func_tag}[INSUFF_DATA] RSI(1w): {len(df_weekly)}/{RSI_PERIOD+1} rows.")
         except Exception as e: logger.exception(f"{func_tag}[ERROR] Calculating weekly RSI:")
-        # --- MODIFICATION: Removed RSI (1mo) calculation ---
-        # try:
-        #     df_monthly = close_daily.resample('ME').last().dropna()
-        #     if len(df_monthly) >= RSI_PERIOD + 1: indicators["RSI (1mo)"] = calculate_rsi_manual(df_monthly, RSI_PERIOD, symbol=f"{symbol}-1Mo")
-        #     else: logger.debug(f"{func_tag}[INSUFF_DATA] RSI(1mo): {len(df_monthly)}/{RSI_PERIOD+1} rows.")
-        # except Exception as e: logger.exception(f"{func_tag}[ERROR] Calculating monthly RSI:")
     if IS_DEBUG_MODE: logger.debug(f"{func_tag} Calculated indicators: { {k:v for k,v in indicators.items() if pd.notna(v)} }")
     return indicators
 
-def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price):
+def generate_gpt_signal(rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price): 
     try: current_price_num = float(current_price) if pd.notna(current_price) else np.nan
     except: current_price_num = np.nan
     numeric_inputs = [rsi_1d, rsi_1w, macd_hist, ma_short_val, ma_medium_val, ma_long_val, srsi_k, srsi_d, bb_pct_b, bb_width_chg, vwap_1d, current_price_num]
@@ -462,7 +455,6 @@ try:
                 gpt_signal_val = generate_gpt_signal(indicators.get("RSI (1d)"), indicators.get("RSI (1w)"), indicators.get("MACD Hist (1d)"), indicators.get(f"MA({MA_SHORT}d)"), indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("SRSI %K (1d)"), indicators.get("SRSI %D (1d)"), indicators.get("BB %B"), indicators.get("BB Width %Chg"), indicators.get("VWAP (1d)"), current_price_val)
                 gemini_alert_val = generate_gemini_alert(indicators.get(f"MA({MA_MEDIUM}d)"), indicators.get(f"MA({MA_LONG}d)"), indicators.get("MACD Hist (1d)"), indicators.get("RSI (1d)"), indicators.get("VWAP (1d)"), current_price_val)
                 
-                # --- MODIFICATION: Append dictionary, excluding RSI (1mo) if it's not calculated ---
                 result_data = { "Rank": live_coin_data.get('market_cap_rank', np.nan), "Symbol": symbol_loop, "Name": live_coin_data.get('name', coin_id_loop), 
                                "MA/MACD Cross Alert": gemini_alert_val, "Composite Score": gpt_signal_val, 
                                f"Price ({VS_CURRENCY.upper()})": current_price_val, 
@@ -473,12 +465,10 @@ try:
                                "% 1y": live_coin_data.get('price_change_percentage_1y_in_currency', np.nan), 
                                f"Volume 24h ({VS_CURRENCY.upper()})": live_coin_data.get('total_volume', np.nan), 
                                "Link": f"https://www.coingecko.com/en/coins/{coin_id_loop}"}
-                # Add indicators, explicitly excluding RSI (1mo) as it's removed from calculation
                 for ind_key, ind_val in indicators.items():
-                    if ind_key != "RSI (1mo)": # Ensure it's not added if accidentally present
+                    if ind_key != "RSI (1mo)": 
                         result_data[ind_key] = ind_val
                 results.append(result_data)
-                # --- END MODIFICATION ---
                 logger.info(f"{log_prefix_coin} End processing.")
             logger.info(f"[TABLE_PROC_DONE] Table processing loop finished. Time: {time.time() - process_start_time:.1f}s")
         
@@ -490,10 +480,8 @@ try:
         if results: 
             try:
                 table_df = pd.DataFrame(results); table_df['Rank'] = pd.to_numeric(table_df['Rank'], errors='coerce'); table_df.set_index('Rank', inplace=True, drop=False) ; table_df.sort_index(inplace=True)
-                # --- MODIFICATION: Removed RSI (1mo) from cols_order ---
                 cols_order = [ "Rank", "Symbol", "Name", "MA/MACD Cross Alert", "Composite Score", f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})", "Link"]
                 df_display = table_df[[col for col in cols_order if col in table_df.columns]].copy()
-                # --- MODIFICATION: Removed RSI (1mo) from numeric_cols_for_formatting ---
                 numeric_cols_for_formatting = [ f"Price ({VS_CURRENCY.upper()})", "% 1h", "% 24h", "% 7d", "% 30d", "% 1y", "RSI (1d)", "RSI (1w)", "SRSI %K (1d)", "SRSI %D (1d)", "MACD Hist (1d)", f"MA({MA_SHORT}d)", f"MA({MA_MEDIUM}d)", f"MA({MA_XLONG}d)", f"MA({MA_LONG}d)", "BB %B", "BB Width", "BB Width %Chg", "VWAP (1d)", "VWAP %", f"Volume 24h ({VS_CURRENCY.upper()})"]
                 
                 if IS_DEBUG_MODE: logger.debug("[TABLE_DEBUG] --- Pre-coercion dtypes for df_display ---"); logger.debug(df_display.dtypes.to_string())
@@ -523,10 +511,9 @@ try:
                     except Exception as e: logger.error(f"[FORMAT_ERR] format_1h_with_icon failed for numeric val '{val}': {e}"); return "N/A" 
                 if '% 1h' in df_display.columns: formatters['% 1h'] = format_1h_with_icon
 
-                # --- MODIFICATION: Removed RSI (1mo) from rsi_cols_list logic if it was there ---
-                rsi_cols_list = [c for c in df_display.columns if "RSI (" in c and "SRSI" not in c and "%" not in c and "1mo" not in c] # More specific
+                rsi_cols_list = [c for c in df_display.columns if "RSI (" in c and "SRSI" not in c and "%" not in c and "1mo" not in c] 
                 srsi_value_cols = ["SRSI %K (1d)", "SRSI %D (1d)"]
-                for col in rsi_cols_list + srsi_value_cols: # RSI (1mo) won't be in rsi_cols_list
+                for col in rsi_cols_list + srsi_value_cols:
                      if col in df_display.columns: formatters[col] = safe_formatter("{:.1f}", col)
                 macd_hist_col_name = "MACD Hist (1d)"
                 if macd_hist_col_name in df_display.columns: formatters[macd_hist_col_name] = safe_formatter("{:+.4f}", macd_hist_col_name)
@@ -549,18 +536,36 @@ try:
                     return style
 
                 def highlight_pct_col_style(val): 
-                    if pd.isna(val): return 'color: #adb5bd;' ;  
+                    if pd.isna(val): return 'color: #adb5bd;'
                     if not isinstance(val, (int, float, np.number)): return '' 
                     color = 'green' if val > 0 else 'red' if val < 0 else '#6c757d'; return f'color: {color};'
+                
+                # --- FIX for SyntaxError from v1.4.13 ---
                 def style_rsi(val): 
-                    if pd.isna(val): return 'color: #adb5bd;'; 
-                    if not isinstance(val, (int, float, np.number)): return ''
-                    if val > RSI_OB: return 'color: #dc3545; font-weight: bold;'
-                    elif val < RSI_OS: return 'color: #198754; font-weight: bold;'; else: return '' 
+                    if pd.isna(val):
+                        return 'color: #adb5bd;'
+                    if not isinstance(val, (int, float, np.number)):
+                        return ''
+                    if val > RSI_OB:
+                        return 'color: #dc3545; font-weight: bold;'
+                    elif val < RSI_OS:
+                        return 'color: #198754; font-weight: bold;'
+                    else: 
+                        return '' 
+                
                 def style_macd_hist(val): 
-                    if pd.isna(val): return 'color: #adb5bd;'; 
-                    if not isinstance(val, (int, float, np.number)): return ''
-                    if val > 0: return 'color: green;'; elif val < 0: return 'color: red;'; else: return '' 
+                    if pd.isna(val):
+                        return 'color: #adb5bd;'
+                    if not isinstance(val, (int, float, np.number)):
+                        return ''
+                    if val > 0:
+                        return 'color: green;'
+                    elif val < 0:
+                        return 'color: red;'
+                    else: 
+                        return '' 
+                # --- END FIX ---
+
                 def style_stoch_rsi(row_subset): 
                     k_col = "SRSI %K (1d)"; d_col = "SRSI %D (1d)"; style_k_css = 'color: #adb5bd;'; style_d_css = 'color: #adb5bd;'
                     k_val_num = row_subset.get(k_col, np.nan); d_val_num = row_subset.get(d_col, np.nan)
@@ -581,7 +586,7 @@ try:
                     if col_name in df_display.columns: styled_table = styled_table.map(highlight_signal_style, subset=[col_name])
                 cols_for_pct_style_apply = [col for col in pct_cols_all if col in df_display.columns]
                 if cols_for_pct_style_apply: styled_table = styled_table.map(highlight_pct_col_style, subset=cols_for_pct_style_apply)
-                rsi_cols_to_style_apply = [col for col in rsi_cols_list if col in df_display.columns] # RSI (1mo) will not be here
+                rsi_cols_to_style_apply = [col for col in rsi_cols_list if col in df_display.columns] 
                 if rsi_cols_to_style_apply: styled_table = styled_table.map(style_rsi, subset=rsi_cols_to_style_apply)
                 if macd_hist_col_name in df_display.columns: styled_table = styled_table.map(style_macd_hist, subset=[macd_hist_col_name])
                 srsi_cols_exist_apply = all(col in df_display.columns for col in srsi_value_cols)
@@ -594,7 +599,6 @@ try:
 
     st.divider();
     with st.expander("📘 Indicator, Signal & Legend Guide", expanded=False): 
-        # --- MODIFICATION: Updated legend to remove RSI (1mo) ---
         st.markdown("""
         *Disclaimer: This dashboard is provided for informational and educational purposes only and does not constitute financial advice.*
 
@@ -646,5 +650,5 @@ try:
     st.divider(); st.caption("Disclaimer: Informational/educational tool only. Not financial advice. DYOR.")
 except Exception as main_exception: logger.exception("!!! [CRITICAL_ERROR] UNHANDLED ERROR IN MAIN APP EXECUTION !!!"); st.error(f"An unexpected error occurred: {main_exception}. Please check the application log below for details.")
 st.divider(); st.subheader("📄 Application Log"); st.caption("Logs from last run. Refresh page for latest after code changes.")
-log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1413", help="Ctrl+A, Ctrl+C to copy.") 
-logger.info(f"--- End of Streamlit script execution (v1.4.13 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
+log_content = log_stream.getvalue(); st.text_area("Log:", value=log_content, height=300, key="log_display_area_v1414", help="Ctrl+A, Ctrl+C to copy.") 
+logger.info(f"--- End of Streamlit script execution (v1.4.14 - Debug Mode: {'ON' if IS_DEBUG_MODE else 'OFF'}) ---"); log_stream.close()
