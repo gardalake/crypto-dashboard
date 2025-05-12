@@ -1,4 +1,4 @@
-# Version: v1.4.15 - Updated Legend Content, Syntax/Indent Fixes
+# Version: v1.4.15 - Fix SyntaxError in style_stoch_rsi
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -98,7 +98,7 @@ def get_coingecko_market_data(ids_list, currency):
 
 @st.cache_data(ttl=CACHE_HIST_TTL, show_spinner=False)
 def get_coingecko_historical_data(coin_id, currency, days, interval='daily'):
-    func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0) # Consider increasing if 429s are frequent
+    func_tag = f"[API_CG_HIST({coin_id})]"; logger.debug(f"{func_tag} Fetching ({interval}), {days}d. Delaying 6s..."); time.sleep(6.0) 
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"; params = {'vs_currency': currency, 'days': str(days), 'interval': interval, 'precision': 'full'}; status_msg = "Unknown Error"
     try:
         logger.debug(f"{func_tag} Requesting URL: {url} with params: {params}"); response = requests.get(url, params=params, timeout=25); response.raise_for_status(); data = response.json()
