@@ -1,4 +1,4 @@
-# Version: v1.4.16 - Add LiveCoinWatch Widget at the top
+# Version: v1.4.16 - Add LiveCoinWatch Widget (using components.html)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -12,7 +12,6 @@ import io
 import streamlit.components.v1 as components # Import components
 
 # --- START: Logging Configuration ---
-# ... (logging setup as before) ...
 log_stream = io.StringIO()
 logging.basicConfig(
     stream=log_stream,
@@ -41,7 +40,7 @@ st.set_page_config(layout="wide", page_title="Crypto Technical Dashboard Pro", p
 st.markdown("""<style>div[data-testid="stMetricValue"] { font-size: 14px !important; }</style>""", unsafe_allow_html=True)
 logger.info("[UI_SETUP] CSS applied.")
 
-# --- Global Configuration (Unchanged from v1.4.15) ---
+# --- Global Configuration ---
 logger.info("[CONFIG] Starting global configuration.")
 SYMBOL_TO_ID_MAP = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "RNDR": "render-token",
@@ -65,12 +64,7 @@ BB_PERIOD, BB_STD_DEV = 20, 2.0
 VWAP_PERIOD = 14
 logger.info(f"[CONFIG] Global config done: {NUM_COINS} coins ({','.join(SYMBOLS[:3])}...), Trad Tickers: {len(TRAD_TICKERS_AV)}.")
 
-# --- FUNCTION DEFINITIONS (Unchanged from v1.4.15) ---
-# format_large_number, get_coingecko_market_data, get_coingecko_historical_data,
-# get_fear_greed_index, get_global_market_data_cg, get_etf_flow, get_traditional_market_data_av,
-# _ensure_numeric_series, calculate_xxx_manual functions, compute_all_indicators,
-# generate_gpt_signal, generate_gemini_alert
-# ... (These functions are copied verbatim from v1.4.15) ...
+# --- FUNCTION DEFINITIONS ---
 def format_large_number(num):
     if pd.isna(num) or not isinstance(num, (int, float, np.number)): return "N/A"
     num_abs = abs(num); sign = "-" if num < 0 else ""
@@ -382,12 +376,10 @@ try:
     # --- MODIFICATION: LiveCoinWatch Widget ---
     livecoinwatch_widget_html = """
         <script defer src="https://www.livecoinwatch.com/static/lcw-widget.js"></script>
-        <div class="livecoinwatch-widget-5" lcw-base="USD" lcw-color-tx="#FFFFFF" lcw-marquee-1="coins" lcw-marquee-2="movers" lcw-marquee-items="20" style="background-color: #1E1E1E !important; border-radius: 10px !important;"></div>
+        <div class="livecoinwatch-widget-5" lcw-base="USD" lcw-color-tx="#FFFFFF" lcw-marquee-1="coins" lcw-marquee-2="movers" lcw-marquee-items="20" style="background-color: #1E1E1E !important; border-radius: 10px !important; width: 100%; overflow: hidden;"></div>
     """
-    # Using st.markdown as components.html might create an iframe with fixed height, cutting off the marquee.
-    # For this type of full-width banner, markdown is often better.
-    st.markdown(livecoinwatch_widget_html, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True) # Add a little space after the widget
+    components.html(livecoinwatch_widget_html, height=60, scrolling=False) 
+    st.markdown("<br>", unsafe_allow_html=True) 
     # --- END MODIFICATION ---
 
     col_title, _, col_button = st.columns([4, 1, 1]) 
@@ -395,7 +387,7 @@ try:
         st.title("📈 Crypto Technical Dashboard Pro")
     with col_button:
         st.write("") 
-        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1415"): 
+        if st.button("🔄 Refresh", help="Force data refresh (clears cache)", key="refresh_button_v1416"): 
             logger.info("[UI_ACTION] Refresh button clicked.")
             if 'api_warning_shown' in st.session_state:
                 del st.session_state['api_warning_shown']
